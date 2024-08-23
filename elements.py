@@ -176,7 +176,7 @@ class system:
         # add the left jumps to tdivconf
         self.tdivconf += np.einsum('ij...,j...->ij...', self.fc[:, :, 0:-1] - fl, self.gL)
         # add the right jumps to tdivconf
-        self.tdivconf += np.einsum('ij...,j...->ij...', self.fc[:, :, 1::] - fl, self.gR)
+        self.tdivconf += np.einsum('ij...,j...->ij...', self.fc[:, :, 1::] - fr, self.gR)
 
         # transform to neg flux in physical coords
         self.negdivconf = -self.Jac*self.tdivconf
