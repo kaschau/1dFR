@@ -140,6 +140,9 @@ class system:
             self.upoly.evaluate(self.uL[:, :, 1::], self.lvdm, self.ua)
             # interpolate solution to right face
             self.upoly.evaluate(self.uR[:, :, 0:-1], self.rvdm, self.ua)
+        else:
+            self.uL[:,:,1::] = self.u[:,0,:]
+            self.uR[:,:,0:-1] = self.u[:,-1,:]
 
         # SET BOUNDARY CONDITIONS
         if bcs == "wall":
