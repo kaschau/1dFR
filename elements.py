@@ -1,13 +1,9 @@
 import numpy as np
-from numpy.polynomial import legendre
+from poly import LegendrePoly
 from pathlib import Path
 from matplotlib import pyplot as plt
 
 gamma = 1.4
-
-
-def compute_coeff(a, y, invdm):
-    a[:] = np.einsum("ji...,ki...->kj...", invdm, y)
 
 
 def get_quad_rules(p, rule):
@@ -18,11 +14,11 @@ def get_quad_rules(p, rule):
             data = np.genfromtxt(f, delimiter=" ")
             return data[:, 0]
     else:
-        data = legendre.leggauss(p + 1)
+        data = np.polynomial.legendre.leggauss(p + 1)
         return data[0]
 
 
-def invflux(u, f):
+def flux(u, f):
     rho = u[0]
     v = u[1] / rho
     rhoE = u[2]
@@ -48,8 +44,8 @@ def rusanov(uL, uR, f):
     vL = np.zeros((f.shape[-1]))
     vR = np.zeros((f.shape[-1]))
 
-    pL[:], vL[:] = invflux(uL, fL)
-    pR[:], vR[:] = invflux(uR, fR)
+    pL[:], vL[:] = flux(uL, fL)
+    pR[:], vR[:] = flux(uR, fR)
 
     lam = np.maximum(
         np.abs(uL) + np.sqrt(gamma * pL / uL[0]),
@@ -83,12 +79,10 @@ def vcjg(k, c, x, der=False):
         Lkm = Legkm.dbasis_at
         Lkp = Legkp.dbasis_at
 
-    gr = 0.5 * (Lk(x) + (etak * Lkm(x) + Lkp(x)) / (1 + etak))
-    gl = 0.5 * (Lk(-x) + (etak * Lkm(-x) + Lkp(-x)) / (1 + etak))
+    g = lambda x: 0.5 * (Lk(x) + (etak * Lkm(x) + Lkp(x)) / (1 + etak))
+    gr = g(x)
+    gl = g(-x)
 
-    plt.plot(x, gl, c='b')
-    plt.plot(x, gr, c = 'orange')
-    plt.show()
     return gl, gr
 
 
@@ -97,6 +91,9 @@ class system:
         self.nvar = nvar = 3
         self.neles = neles
         self.deg = deg = p
+
+        self.upoly = LegendrePoly(deg)
+        self.dfpoly = LegendrePoly(deg - 1)
 
         # get num solution points
         self.upts = get_quad_rules(p, solpts)
@@ -118,46 +115,57 @@ class system:
         # create inverse/vandermonde matrix
         self.vdm = np.zeros((nupts, nupts))
         self.invdm = np.zeros((nupts, nupts))
-        self.vandermonde()
+        self.vdm[:] = self.upoly.vandermond(self.upts)
+        self.invdm[:] = np.linalg.inv(self.vdm)
 
         # create solution poly'l
         self.ua = np.zeros((nvar, nupts, neles))
-        compute_coeff(self.ua, self.u, self.invdm)
+        self.upoly.compute_coeff(self.ua, self.u, self.invdm)
 
         # compute pointwise fluxes
         self.f = np.zeros((nvar, nupts, neles))
-        invflux(self.u, self.f)
+        flux(self.u, self.f)
 
         # compute flux poly'l
         self.fa = np.zeros((nvar, nupts, neles))
-        compute_coeff(self.fa, self.f, self.invdm)
+        self.upoly.compute_coeff(self.fa, self.f, self.invdm)
 
-        # interpolate to faces
+        # Begin building of negdivconf
+        self.negdifconv = np.zeros((nvar, nupts, neles))
+        # compute flux derivative at solution points
+        dfa = self.dfpoly.diff_coeff(self.fa)
+        self.dfpoly.evaluate(self.negdifconv,
+                             self.dfpoly.vandermond(self.upts),
+                             dfa)
+
+        # interpolate solution to faces
         self.uL = np.zeros((nvar, neles + 1))
         self.uR = np.zeros((nvar, neles + 1))
-        if self.fpts_in_upts:
-            self.interpolate_to_face = self.noop
-            self.lvdm = None
-            self.rvdm = None
-        else:
-            self.interpolate_to_face = self.i2f
-            self.lvdm = legendre.legvander([-1], self.deg)
-            self.rvdm = legendre.legvander([1], self.deg)
-        self.i2f()
+        if not self.fpts_in_upts:
+            # interpolate solution to left face
+            lvdm = self.upoly.vandermond([-1])
+            self.upoly.evaluate(self.uL[:, 1::], lvdm, self.ua)
+            # interpolate solution to right face
+            rvdm = self.upoly.vandermond([1])
+            self.upoly.evaluate(self.uR[:, 0:-1], rvdm, self.ua)
 
-        # set BCS
-        self.uL[:, -1] = self.uL[:, -2]
-        self.uR[:, 0] = self.uR[:, 1]
+        # SET BOUNDARY CONDITIONS
+
+        # walls
+        # self.uL[:, 0] = self.uR[:, 0]
+        # self.uR[:, -1] = self.uL[:, -1]
+
+        # periodics
+        self.uL[:, 0] = self.uL[:, -1]
+        self.uR[:, -1] = self.uL[:, -1]
 
         # compute common fluxes
         self.fc = np.zeros((nvar, neles + 1))
         rusanov(self.uL, self.uR, self.fc)
 
-        # define correction functions
-        #self.Zeta = get_quad_rules(deg + 1, "lobatto")
-        self.Zeta = np.linspace(-1,1,100)
-        c = 0
-        self.gL, self.gR = vcjg(deg, c, self.Zeta, der=True)
+        # compute g' of correction functions at solution points
+        c = 0  # Vincent constant 0 = nodal DG
+        self.gL, self.gR = vcjg(deg, c, self.upts, der=True)
 
     def noop(*args, **kwargs):
         pass
@@ -174,19 +182,15 @@ class system:
 
     def set_ics(self):
         # density
-        self.u[0, :] = 1.2
+        self.u[0, :] = 1.0
         # momentum
-        self.u[1, :] = self.x[:]
+        self.u[1, :] = 1.0
         # total energy
         self.u[2, :] = 1.0
 
-    def vandermonde(self):
-        self.vdm[:] = legendre.legvander(self.upts, self.deg)
-        self.invdm[:] = np.linalg.inv(self.vdm)
-
     def i2f(self):
-        self.uL[:, 0:-1] = np.einsum("ji...,ki...->k...", self.lvdm, self.ua)
-        self.uR[:, 1::] = np.einsum("ji...,ki...->k...", self.rvdm, self.ua)
+        self.uL[:, 1::] = np.einsum("ji...,ki...->k...", self.lvdm, self.ua)
+        self.uR[:, 0:-1] = np.einsum("ji...,ki...->k...", self.rvdm, self.ua)
 
 
 if __name__ == "__main__":
