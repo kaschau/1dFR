@@ -2,12 +2,13 @@ import numpy as np
 from numpy.polynomial import legendre
 from pathlib import Path
 from matplotlib import pyplot as plt
-from poly import LegendrePoly
 
 gamma = 1.4
 
+
 def compute_coeff(a, y, invdm):
     a[:] = np.einsum("ji...,ki...->kj...", invdm, y)
+
 
 def get_quad_rules(p, rule):
     if "lobatto" in rule:
@@ -17,8 +18,9 @@ def get_quad_rules(p, rule):
             data = np.genfromtxt(f, delimiter=" ")
             return data[:, 0]
     else:
-        data = legendre.leggauss(p+1)
+        data = legendre.leggauss(p + 1)
         return data[0]
+
 
 def invflux(u, f):
     rho = u[0]
@@ -33,6 +35,7 @@ def invflux(u, f):
     f[2] = (rhoE + p) * v
 
     return p, v
+
 
 def rusanov(uL, uR, f):
     # wavespeed
@@ -55,21 +58,39 @@ def rusanov(uL, uR, f):
 
     f[:] = 0.5 * (fR + fL - lam * (uR - uL))
 
-def vcjg(k, etak, x):
+
+def vcjg(k, c, x, der=False):
+    from poly import LegendrePoly
+
+    if c == 0:
+        etak = 0.0
+    elif c == 1:
+        etak = k / (k + 1)
+    elif c == 2:
+        etak = (k + 1) / k
+    else:
+        raise ValueError
+
     Legk = LegendrePoly(k)
-    Legkm = LegendrePoly(k-1)
-    Legkp = LegendrePoly(k+1)
-    Lk = Legk.basis_at
-    Lkm = Legkm.basis_at
-    Lkp = Legkp.basis_at
+    Legkm = LegendrePoly(k - 1)
+    Legkp = LegendrePoly(k + 1)
+    if not der:
+        Lk = Legk.basis_at
+        Lkm = Legkm.basis_at
+        Lkp = Legkp.basis_at
+    else:
+        Lk = Legk.dbasis_at
+        Lkm = Legkm.dbasis_at
+        Lkp = Legkp.dbasis_at
 
-    gl = (-1)**k/2.0*(Lk(x)-(etak*Lkm(x)+Lkp(x))/(1+etak))
-    gr = 0.5*(Lk(x)+(etak*Lkm(x)+Lkp(x))/(1+etak))
+    gr = 0.5 * (Lk(x) + (etak * Lkm(x) + Lkp(x)) / (1 + etak))
+    gl = 0.5 * (Lk(-x) + (etak * Lkm(-x) + Lkp(-x)) / (1 + etak))
 
-    plt.plot(x, gl)
-    plt.plot(x, gr)
+    plt.plot(x, gl, c='b')
+    plt.plot(x, gr, c = 'orange')
     plt.show()
     return gl, gr
+
 
 class system:
     def __init__(self, p, neles, solpts):
@@ -133,9 +154,10 @@ class system:
         rusanov(self.uL, self.uR, self.fc)
 
         # define correction functions
-        self.Zeta = get_quad_rules(p, 'lobatto')
-        etak = 0
-        gL, gR = vcjg(deg, etak, np.linspace(-1,1,100))
+        #self.Zeta = get_quad_rules(deg + 1, "lobatto")
+        self.Zeta = np.linspace(-1,1,100)
+        c = 0
+        self.gL, self.gR = vcjg(deg, c, self.Zeta, der=True)
 
     def noop(*args, **kwargs):
         pass
@@ -165,10 +187,6 @@ class system:
     def i2f(self):
         self.uL[:, 0:-1] = np.einsum("ji...,ki...->k...", self.lvdm, self.ua)
         self.uR[:, 1::] = np.einsum("ji...,ki...->k...", self.rvdm, self.ua)
-
-
-
-
 
 
 if __name__ == "__main__":
