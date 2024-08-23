@@ -96,20 +96,20 @@ class system:
         self.upoly = LegendrePoly(deg)
         self.dfpoly = LegendrePoly(deg - 1)
 
-        # create solution point inverse/vandermonde matrix
-        self.uvdm = self.upoly.vandermond(self.upts)
-        self.invudm = np.linalg.inv(self.uvdm)
-
-        # left and right vandermonde
-        self.lvdm = self.upoly.vandermonde([-1])
-        self.rvdm = self.upoly.vandermonde([1])
-
         # get num solution points
         self.upts = get_quad_rules(p, solpts)
         if min(self.upts) < -0.99999999:
             self.fpts_in_upts = True
         else:
             self.fpts_in_upts = False
+
+        # create solution point inverse/vandermonde matrix
+        self.uvdm = self.upoly.vandermonde(self.upts)
+        self.invudm = np.linalg.inv(self.uvdm)
+
+        # left and right vandermonde
+        self.lvdm = self.upoly.vandermonde([-1])
+        self.rvdm = self.upoly.vandermonde([1])
 
         # create grid
         self.x = np.zeros((nupts, neles))
@@ -162,21 +162,21 @@ class system:
 
         # compute flux derivative at solution points
         dfa = self.dfpoly.diff_coeff(self.fa)
-        self.dfpoly.evaluate(self.tdivconf, self.dfpoly.vandermond(self.upts), dfa)
+        self.dfpoly.evaluate(self.tdivconf, self.dfpoly.vandermonde(self.upts), dfa)
 
         # compute discontinuous flux at interfaces
-        fl = np.zeros(nvar, 1, neles)
+        fl = np.zeros((nvar, 1, neles))
         self.upoly.evaluate(fl, self.lvdm, self.fa)
-        fr = np.zeros(nvar, 1, neles)
+        fr = np.zeros((nvar, 1, neles))
         self.upoly.evaluate(fr, self.rvdm, self.fa)
 
         # add the left jumps to tdivconf
-        self.tdivconf += (self.fc[:, :, 0:-1] - fl) * self.gL
+        self.tdivconf += np.einsum('ij...,j...->ij...', self.fc[:, :, 0:-1] - fl, self.gL)
         # add the right jumps to tdivconf
-        self.tdivconf += (self.fc[:, :, 1::] - fr) * self.gR
+        self.tdivconf += np.einsum('ij...,j...->ij...', self.fc[:, :, 1::] - fl, self.gR)
 
         # transform to neg flux in physical coords
-        self.negdivconf = -self.Jac*self.negdivconf
+        self.negdivconf = -self.Jac*self.tdivconf
 
     def noop(*args, **kwargs):
         pass
