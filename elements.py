@@ -87,13 +87,22 @@ def vcjg(k, c, x, der=False):
 
 
 class system:
-    def __init__(self, p, neles, solpts):
+    def __init__(self, p, neles, solpts, bcs="perodic"):
         self.nvar = nvar = 3
         self.neles = neles
         self.deg = deg = p
+        self.nupts = nupts = p + 1
 
         self.upoly = LegendrePoly(deg)
         self.dfpoly = LegendrePoly(deg - 1)
+
+        # create solution point inverse/vandermonde matrix
+        self.uvdm = self.upoly.vandermond(self.upts)
+        self.invudm = np.linalg.inv(self.uvdm)
+
+        # left and right vandermonde
+        self.lvdm = self.upoly.vandermonde([-1])
+        self.rvdm = self.upoly.vandermonde([1])
 
         # get num solution points
         self.upts = get_quad_rules(p, solpts)
@@ -102,25 +111,18 @@ class system:
         else:
             self.fpts_in_upts = False
 
-        self.nupts = nupts = len(self.upts)
-
         # create grid
         self.x = np.zeros((nupts, neles))
+        self.Jac = np.zeros((nupts, neles))
         self.create_grid()
 
         # create initial conditions
         self.u = np.zeros((nvar, nupts, neles))
         self.set_ics()
 
-        # create inverse/vandermonde matrix
-        self.vdm = np.zeros((nupts, nupts))
-        self.invdm = np.zeros((nupts, nupts))
-        self.vdm[:] = self.upoly.vandermond(self.upts)
-        self.invdm[:] = np.linalg.inv(self.vdm)
-
         # create solution poly'l
         self.ua = np.zeros((nvar, nupts, neles))
-        self.upoly.compute_coeff(self.ua, self.u, self.invdm)
+        self.upoly.compute_coeff(self.ua, self.u, self.invudm)
 
         # compute pointwise fluxes
         self.f = np.zeros((nvar, nupts, neles))
@@ -128,44 +130,53 @@ class system:
 
         # compute flux poly'l
         self.fa = np.zeros((nvar, nupts, neles))
-        self.upoly.compute_coeff(self.fa, self.f, self.invdm)
-
-        # Begin building of negdivconf
-        self.negdifconv = np.zeros((nvar, nupts, neles))
-        # compute flux derivative at solution points
-        dfa = self.dfpoly.diff_coeff(self.fa)
-        self.dfpoly.evaluate(self.negdifconv,
-                             self.dfpoly.vandermond(self.upts),
-                             dfa)
+        self.upoly.compute_coeff(self.fa, self.f, self.invudm)
 
         # interpolate solution to faces
-        self.uL = np.zeros((nvar, neles + 1))
-        self.uR = np.zeros((nvar, neles + 1))
+        self.uL = np.zeros((nvar, 1, neles + 1))
+        self.uR = np.zeros((nvar, 1, neles + 1))
         if not self.fpts_in_upts:
             # interpolate solution to left face
-            lvdm = self.upoly.vandermond([-1])
-            self.upoly.evaluate(self.uL[:, 1::], lvdm, self.ua)
+            self.upoly.evaluate(self.uL[:, :, 1::], self.lvdm, self.ua)
             # interpolate solution to right face
-            rvdm = self.upoly.vandermond([1])
-            self.upoly.evaluate(self.uR[:, 0:-1], rvdm, self.ua)
+            self.upoly.evaluate(self.uR[:, :, 0:-1], self.rvdm, self.ua)
 
         # SET BOUNDARY CONDITIONS
-
-        # walls
-        # self.uL[:, 0] = self.uR[:, 0]
-        # self.uR[:, -1] = self.uL[:, -1]
-
-        # periodics
-        self.uL[:, 0] = self.uL[:, -1]
-        self.uR[:, -1] = self.uL[:, -1]
+        if bcs == "wall":
+            self.uL[:, 0] = self.uR[:, 0]
+            self.uR[:, -1] = self.uL[:, -1]
+        elif bcs == "perodic":
+            self.uL[:, :, 0] = self.uL[:, :, -1]
+            self.uR[:, :, -1] = self.uL[:, :, -1]
 
         # compute common fluxes
-        self.fc = np.zeros((nvar, neles + 1))
+        self.fc = np.zeros((nvar, 1, neles + 1))
         rusanov(self.uL, self.uR, self.fc)
 
         # compute g' of correction functions at solution points
         c = 0  # Vincent constant 0 = nodal DG
         self.gL, self.gR = vcjg(deg, c, self.upts, der=True)
+
+        # Begin building of negdivconf
+        self.tdivconf = np.zeros((nvar, nupts, neles))
+
+        # compute flux derivative at solution points
+        dfa = self.dfpoly.diff_coeff(self.fa)
+        self.dfpoly.evaluate(self.tdivconf, self.dfpoly.vandermond(self.upts), dfa)
+
+        # compute discontinuous flux at interfaces
+        fl = np.zeros(nvar, 1, neles)
+        self.upoly.evaluate(fl, self.lvdm, self.fa)
+        fr = np.zeros(nvar, 1, neles)
+        self.upoly.evaluate(fr, self.rvdm, self.fa)
+
+        # add the left jumps to tdivconf
+        self.tdivconf += (self.fc[:, :, 0:-1] - fl) * self.gL
+        # add the right jumps to tdivconf
+        self.tdivconf += (self.fc[:, :, 1::] - fr) * self.gR
+
+        # transform to neg flux in physical coords
+        self.negdivconf = -self.Jac*self.negdivconf
 
     def noop(*args, **kwargs):
         pass
@@ -179,6 +190,7 @@ class system:
         self.x[:] = np.mean(eles, axis=-1)[np.newaxis, :] + np.einsum(
             "i,j->ij", self.upts, h / 2.0
         )
+        self.Jac[:] = h / 2.0
 
     def set_ics(self):
         # density
@@ -187,10 +199,6 @@ class system:
         self.u[1, :] = 1.0
         # total energy
         self.u[2, :] = 1.0
-
-    def i2f(self):
-        self.uL[:, 1::] = np.einsum("ji...,ki...->k...", self.lvdm, self.ua)
-        self.uR[:, 0:-1] = np.einsum("ji...,ki...->k...", self.rvdm, self.ua)
 
 
 if __name__ == "__main__":

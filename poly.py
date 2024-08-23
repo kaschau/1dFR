@@ -28,7 +28,7 @@ class LegendrePoly(BasePoly):
     def __init__(self, deg):
         self.deg = deg
 
-    def vandermond(self, x):
+    def vandermonde(self, x):
         return legvander(x, self.deg)
 
     def basis_at(self, x):
