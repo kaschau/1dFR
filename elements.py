@@ -1,12 +1,24 @@
 import numpy as np
+from numpy.polynomial import legendre
 from pathlib import Path
+from matplotlib import pyplot as plt
+from poly import LegendrePoly
 
 gamma = 1.4
-
 
 def compute_coeff(a, y, invdm):
     a[:] = np.einsum("ji...,ki...->kj...", invdm, y)
 
+def get_quad_rules(p, rule):
+    if "lobatto" in rule:
+        fname = f"/quadrules/gauss-legendre-lobatto-n{p+1}-d{2*(p)-1}-spu.txt"
+        direct = str(Path(__file__).parent)
+        with open(direct + fname) as f:
+            data = np.genfromtxt(f, delimiter=" ")
+            return data[:, 0]
+    else:
+        data = legendre.leggauss(p+1)
+        return data[0]
 
 def invflux(u, f):
     rho = u[0]
@@ -21,7 +33,6 @@ def invflux(u, f):
     f[2] = (rhoE + p) * v
 
     return p, v
-
 
 def rusanov(uL, uR, f):
     # wavespeed
@@ -44,24 +55,40 @@ def rusanov(uL, uR, f):
 
     f[:] = 0.5 * (fR + fL - lam * (uR - uL))
 
+def vcjg(k, etak, x):
+    Legk = LegendrePoly(k)
+    Legkm = LegendrePoly(k-1)
+    Legkp = LegendrePoly(k+1)
+    Lk = Legk.basis_at
+    Lkm = Legkm.basis_at
+    Lkp = Legkp.basis_at
+
+    gl = (-1)**k/2.0*(Lk(x)-(etak*Lkm(x)+Lkp(x))/(1+etak))
+    gr = 0.5*(Lk(x)+(etak*Lkm(x)+Lkp(x))/(1+etak))
+
+    plt.plot(x, gl)
+    plt.plot(x, gr)
+    plt.show()
+    return gl, gr
 
 class system:
-    def __init__(self, p, neles, quadrule):
+    def __init__(self, p, neles, solpts):
         self.nvar = nvar = 3
+        self.neles = neles
         self.deg = deg = p
 
         # get num solution points
-        self.get_quad_rules(p, quadrule)
-        if min(self.Xi) < -0.99999999:
+        self.upts = get_quad_rules(p, solpts)
+        if min(self.upts) < -0.99999999:
             self.fpts_in_upts = True
         else:
             self.fpts_in_upts = False
 
-        self.nupts = nupts = len(self.Xi)
+        self.nupts = nupts = len(self.upts)
 
         # create grid
-        self.x = np.zeros((nupts))
-        self.create_grid(neles)
+        self.x = np.zeros((nupts, neles))
+        self.create_grid()
 
         # create initial conditions
         self.u = np.zeros((nvar, nupts, neles))
@@ -93,8 +120,8 @@ class system:
             self.rvdm = None
         else:
             self.interpolate_to_face = self.i2f
-            self.lvdm = np.polynomial.legendre.legvander([-1], self.deg)
-            self.rvdm = np.polynomial.legendre.legvander([1], self.deg)
+            self.lvdm = legendre.legvander([-1], self.deg)
+            self.rvdm = legendre.legvander([1], self.deg)
         self.i2f()
 
         # set BCS
@@ -106,32 +133,12 @@ class system:
         rusanov(self.uL, self.uR, self.fc)
 
         # define correction functions
-        #gL = np.polynomial.
+        self.Zeta = get_quad_rules(p, 'lobatto')
+        etak = 0
+        gL, gR = vcjg(deg, etak, np.linspace(-1,1,100))
 
     def noop(*args, **kwargs):
         pass
-
-    def get_quad_rules(self, p, rule):
-        if "lobatto" in rule:
-            fname = f"/quadrules/gauss-legendre-lobatto-n{p+1}-d{2*(p)-1}-spu.txt"
-        else:
-            fname = f"/quadrules/gauss-legendre-n{p+1}-d{2*p+1}-spu.txt"
-
-        # Get Solution Points
-        direct = str(Path(__file__).parent)
-        with open(direct + fname) as f:
-            data = np.genfromtxt(f, delimiter=" ")
-            self.Xi = data[:, 0]
-            self.weights = data[:, 1]
-        # Get correction function points
-        direct = str(Path(__file__).parent)
-        try:
-            fname = f"/quadrules/gauss-legendre-lobatto-n{p+2}-d{2*(p+1)-1}-spu.txt"
-            with open(direct + fname) as f:
-                data = np.genfromtxt(f, delimiter=" ")
-                self.Zeta = data[:, 0]
-        except FileNotFoundError:
-            self.Zeta = np.array([-1, 1])
 
     def create_grid(self):
         neles = self.neles
@@ -140,7 +147,7 @@ class system:
         eles[:, 1] = np.linspace(0, 1, neles + 1)[1::]
         h = eles[:, 1] - eles[:, 0]
         self.x[:] = np.mean(eles, axis=-1)[np.newaxis, :] + np.einsum(
-            "i,j->ij", self.Xi, h / 2.0
+            "i,j->ij", self.upts, h / 2.0
         )
 
     def set_ics(self):
@@ -152,12 +159,16 @@ class system:
         self.u[2, :] = 1.0
 
     def vandermonde(self):
-        self.vdm[:] = np.polynomial.legendre.legvander(self.Xi, self.deg)
+        self.vdm[:] = legendre.legvander(self.upts, self.deg)
         self.invdm[:] = np.linalg.inv(self.vdm)
 
     def i2f(self):
         self.uL[:, 0:-1] = np.einsum("ji...,ki...->k...", self.lvdm, self.ua)
         self.uR[:, 1::] = np.einsum("ji...,ki...->k...", self.rvdm, self.ua)
+
+
+
+
 
 
 if __name__ == "__main__":
