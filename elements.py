@@ -7,6 +7,7 @@ from matplotlib import pyplot as plt
 
 gamma = 1.4
 np.seterr(all='raise')
+plt.style.use("/Users/kschau/Dropbox/machines/config/matplotlib/stylelib/whitePresentation.mplstyle")
 
 
 def get_quad_rules(p, rule):
@@ -244,34 +245,38 @@ class system:
 
     def set_ics(self, pris):
         # density
-        self.u[0, :] = pris[0]
+        self.u0[0, :] = pris[0]
         # momentum
-        self.u[1, :] = pris[1] * pris[0]
+        self.u0[1, :] = pris[1] * pris[0]
         # total energy
-        self.u[2, :] = 0.5 * pris[0] * pris[1] ** 2 + pris[2] / (gamma - 1.0)
+        self.u0[2, :] = 0.5 * pris[0] * pris[1] ** 2 + pris[2] / (gamma - 1.0)
 
     def set_bcs(self, bc):
         self.bc = bc
 
-    def plot(self):
-        rho = self.u[0]
-        v = self.u[1] / rho
-        rhoE = self.u[2]
+    def plot(self, fname=None):
+        rho = self.u0[0]
+        v = self.u0[1] / rho
+        rhoE = self.u0[2]
 
         p = (gamma - 1.0) * (rhoE - 0.5 * rho * v**2)
 
-        plt.plot(self.x.ravel(order="F"), self.u[0].ravel(order="F"), label="rho", marker='o')
+        plt.plot(self.x.ravel(order="F"), self.u0[0].ravel(order="F"), label="rho", marker='o')
         plt.plot(self.x.ravel(order="F"), p.ravel(order="F"), label="p", marker="o")
         plt.plot(self.x.ravel(order="F"), v.ravel(order="F"), label="v", marker="o")
-        plt.legend()
-        plt.show()
+        plt.legend(loc="upper right")
+        if fname:
+            plt.savefig(fname)
+            plt.clf()
+        else:
+            plt.show()
 
 
 if __name__ == "__main__":
     p = 4
-    neles = 20
+    neles = 11
     quad = "gauss-legendre"
-    intg = "rk1"
+    intg = "rk3"
     a = system(p, quad)
 
     a.create_grid(neles)
@@ -281,12 +286,12 @@ if __name__ == "__main__":
 
     a.set_ics([np.sin(2.0 * np.pi * a.x) + 2.0, 1.0, 1.0])
     # a.set_ics([1.0, 1.0, 1.0])
-    a.plot()
 
     dt = 1e-4
     niter = 140
-    while a.t < 0.5:
+    a.plot(f"oneD_{a.niter:06d}.png")
+    while a.t < 1.0:
     # while a.niter < niter:
         a.intg.step(a, dt)
-    print(a.t, a.niter)
-    a.plot()
+        if a.niter%1000 == 0:
+            a.plot(f"oneD_{a.niter:06d}.png")

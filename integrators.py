@@ -14,7 +14,7 @@ class rk1(BaseIntegrator):
     def step(self, system, dt):
         system.RHS(0)
 
-        system.u += dt * system.negdivconf
+        system.u0 += dt * system.negdivconf
         system.t += dt
         system.niter += 1
 
