@@ -24,7 +24,6 @@ def flux(u, f):
     rho = u[0]
     v = u[1] / rho
     rhoE = u[2]
-    gamma = 1.4
 
     p = (gamma - 1.0) * (rhoE - 0.5 * rho * v**2)
 
@@ -111,7 +110,7 @@ class system:
         nvar = self.nvar
         neles = self.neles
         nupts = self.nupts
-        #RHS arrays
+        # RHS arrays
         self.ua = np.zeros((nvar, nupts, neles))
         self.f = np.zeros((nvar, nupts, neles))
         self.fa = np.zeros((nvar, nupts, neles))
@@ -138,17 +137,16 @@ class system:
         # create integrator
         self.intg = subclass_where(BaseIntegrator, name=intg)()
         for bank in range(self.intg.nbanks):
-            setattr(self, f'u{bank}', np.zeros((nvar, nupts, neles)))
+            setattr(self, f"u{bank}", np.zeros((nvar, nupts, neles)))
         self.u = self.u0
 
-
-    def RHS(self, ubank = 0):
+    def RHS(self, ubank=0):
         nvar = self.nvar
         nupts = self.nupts
         deg = self.deg
         neles = self.neles
 
-        soln = getattr(self, f'u{ubank}')
+        soln = getattr(self, f"u{ubank}")
 
         # create solution poly'l
         self.upoly.compute_coeff(self.ua, soln, self.invudm)
@@ -223,25 +221,24 @@ class system:
         self.Jac = h / 2.0
 
     def set_ics(self, pris):
-
         # density
         self.u[0, :] = pris[0]
         # momentum
-        self.u[1, :] = pris[1]*pris[0]
+        self.u[1, :] = pris[1] * pris[0]
         # total energy
-        self.u[2, :] = 0.5*pris[1]**2 + pris[2]/(1.0-gamma)
+        self.u[2, :] = 0.5 * pris[0] * pris[1] ** 2 + pris[2] / (gamma - 1.0)
 
     def plot(self):
         rho = self.u[0]
         v = self.u[1] / rho
         rhoE = self.u[2]
-        gamma = 1.4
 
         p = (gamma - 1.0) * (rhoE - 0.5 * rho * v**2)
 
-        plt.plot(self.x.ravel(order='F'), self.u[0].ravel(order='F'), label="rho")
-        plt.plot(self.x.ravel(order='F'), p.ravel(order='F'), label="p")
-        plt.plot(self.x.ravel(order='F'), v.ravel(order='F'), label="v")
+        plt.plot(self.x.ravel(order="F"), self.u[0].ravel(order="F"), label="rho")
+        plt.plot(self.x.ravel(order="F"), p.ravel(order="F"), label="p")
+        plt.plot(self.x.ravel(order="F"), v.ravel(order="F"), label="v")
+        plt.legend()
         plt.show()
 
 
@@ -256,7 +253,7 @@ if __name__ == "__main__":
     a.set_intg(intg)
     a.set_RHS()
 
-    a.set_ics([1.2, 1.0, 1.0])
+    a.set_ics([np.sin(2.0 * np.pi * a.x) + 2.0, 1.0, 1.0])
 
     # a.RHS()
     a.plot()
