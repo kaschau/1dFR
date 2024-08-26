@@ -187,19 +187,20 @@ class system:
         self.upoly.compute_coeff(self.fa, self.f, self.invudm)
 
         # interpolate solution to faces
+        # REMEMBER, RIGHT interface is LEFT side of element
         if not self.fpts_in_upts:
             # interpolate solution to left face
-            self.upoly.evaluate(self.uL[:, :, 1::], self.lvdm, self.ua)
+            self.upoly.evaluate(self.uL[:, :, 1::], self.rvdm, self.ua)
             # interpolate solution to right face
-            self.upoly.evaluate(self.uR[:, :, 0:-1], self.rvdm, self.ua)
+            self.upoly.evaluate(self.uR[:, :, 0:-1], self.lvdm, self.ua)
         else:
-            self.uL[:, :, 1::] = soln[:, 0, :]
-            self.uR[:, :, 0:-1] = soln[:, -1, :]
+            self.uL[:, :, 1::] = soln[:, -1, :]
+            self.uR[:, :, 0:-1] = soln[:, 0, :]
 
         # SET BOUNDARY CONDITIONS
         if self.bc == "wall":
-            self.uL[:, 0] = self.uR[:, 0]
-            self.uR[:, -1] = self.uL[:, -1]
+            self.uL[:, :, 0] = self.uL[:, :, 0]
+            self.uR[:, :, -1] = self.uL[:, :, -1]
         elif self.bc == "periodic":
             self.uL[:, :, 0] = self.uL[:, :, -1]
             self.uR[:, :, -1] = self.uR[:, :, 0]
@@ -259,16 +260,16 @@ class system:
 
         p = (gamma - 1.0) * (rhoE - 0.5 * rho * v**2)
 
-        plt.plot(self.x.ravel(order="F"), self.u[0].ravel(order="F"), label="rho")
-        plt.plot(self.x.ravel(order="F"), p.ravel(order="F"), label="p")
-        plt.plot(self.x.ravel(order="F"), v.ravel(order="F"), label="v")
+        plt.plot(self.x.ravel(order="F"), self.u[0].ravel(order="F"), label="rho", marker='o')
+        plt.plot(self.x.ravel(order="F"), p.ravel(order="F"), label="p", marker="o")
+        plt.plot(self.x.ravel(order="F"), v.ravel(order="F"), label="v", marker="o")
         plt.legend()
         plt.show()
 
 
 if __name__ == "__main__":
-    p = 2
-    neles = 2
+    p = 4
+    neles = 20
     quad = "gauss-legendre"
     intg = "rk1"
     a = system(p, quad)
@@ -280,12 +281,12 @@ if __name__ == "__main__":
 
     a.set_ics([np.sin(2.0 * np.pi * a.x) + 2.0, 1.0, 1.0])
     # a.set_ics([1.0, 1.0, 1.0])
-    # a.plot()
+    a.plot()
 
-    dt = 1e-3
-    niter = 1
-    # while a.t < 0.1:
-    while a.niter < niter:
+    dt = 1e-4
+    niter = 140
+    while a.t < 0.5:
+    # while a.niter < niter:
         a.intg.step(a, dt)
     print(a.t, a.niter)
     a.plot()
