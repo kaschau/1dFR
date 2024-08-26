@@ -195,8 +195,8 @@ class system:
             # interpolate solution to right face
             self.upoly.evaluate(self.uR[:, :, 0:-1], self.lvdm, self.ua)
         else:
-            self.uL[:, :, 1::] = soln[:, -1, :]
-            self.uR[:, :, 0:-1] = soln[:, 0, :]
+            self.uL[:, 0, 1::] = soln[:, -1, :]
+            self.uR[:, 0, 0:-1] = soln[:, 0, :]
 
         # SET BOUNDARY CONDITIONS
         if self.bc == "wall":
@@ -267,7 +267,7 @@ class system:
         plt.legend(loc="upper right")
         if fname:
             plt.savefig(fname)
-            plt.clf()
+            plt.close()
         else:
             plt.show()
 
@@ -275,7 +275,7 @@ class system:
 if __name__ == "__main__":
     p = 4
     neles = 11
-    quad = "gauss-legendre"
+    quad = "gauss-legendre-lobatto"
     intg = "rk3"
     a = system(p, quad)
 
