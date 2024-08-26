@@ -6,6 +6,7 @@ from pathlib import Path
 from matplotlib import pyplot as plt
 
 gamma = 1.4
+np.seterr(all='raise')
 
 
 def get_quad_rules(p, rule):
@@ -53,7 +54,7 @@ def rusanov(uL, uR, f):
         np.abs(uR) + np.sqrt(gamma * pR / uR[0]),
     )
 
-    f[:] = 0.5 * (fR + fL - lam * (uR - uL))
+    f[:] = 0.5 * (fL + fR - lam * (uR - uL))
 
 
 def vcjg(k, c, x, der=False):
@@ -71,26 +72,31 @@ def vcjg(k, c, x, der=False):
     Legk = LegendrePoly(k)
     Legkm = LegendrePoly(k - 1)
     Legkp = LegendrePoly(k + 1)
-    if not der:
-        Lk = Legk.basis_at
-        Lkm = Legkm.basis_at
-        Lkp = Legkp.basis_at
-    else:
-        Lk = Legk.dbasis_at
-        Lkm = Legkm.dbasis_at
-        Lkp = Legkp.dbasis_at
 
     def g(x, etak):
         return 0.5 * (Lk(x) + (etak * Lkm(x) + Lkp(x)) / (1 + etak))
 
-    gr = g(x, etak)
-    gl = g(-x, etak)
+    if not der:
+        Lk = Legk.basis_at
+        Lkm = Legkm.basis_at
+        Lkp = Legkp.basis_at
+        gr = g(x, etak)
+        gl = g(-x, etak)
+    else:
+        Lk = Legk.dbasis_at
+        Lkm = Legkm.dbasis_at
+        Lkp = Legkp.dbasis_at
+        gr = g(x, etak)
+        gl = -g(-x, etak)
 
     return gl, gr
 
 
 class system:
     def __init__(self, p, solpts):
+        self.t = 0.0
+        self.niter = 0
+
         self.nvar = nvar = 3
         self.deg = deg = p
         self.neles = neles
@@ -106,6 +112,21 @@ class system:
         else:
             self.fpts_in_upts = False
 
+        # compute g' of correction functions at solution points
+        c = 0  # Vincent constant 0 = nodal DG
+        self.gL, self.gR = vcjg(deg, c, self.upts, der=True)
+
+        # xt = np.linspace(-1, 1, 100)
+        # gL, gR = vcjg(deg, c, xt, der=False)
+        # plt.plot(xt, gL, label="l")
+        # plt.plot(xt, gR, label="r")
+        # dgL, dgR = vcjg(deg, c, xt, der=True)
+        # plt.plot(xt, dgL, label="dl")
+        # plt.plot(xt, dgR, label="dr")
+        # plt.legend()
+        # plt.grid(visible=True)
+        # plt.show()
+
     def set_RHS(self):
         nvar = self.nvar
         neles = self.neles
@@ -117,6 +138,7 @@ class system:
         self.uL = np.zeros((nvar, 1, neles + 1))
         self.uR = np.zeros((nvar, 1, neles + 1))
         self.fc = np.zeros((nvar, 1, neles + 1))
+        self.flr = np.zeros((nvar, 1, neles))
         self.negdivconf = np.zeros((nvar, nupts, neles))
 
         # create solution point inverse/vandermonde matrix
@@ -128,7 +150,7 @@ class system:
         self.rvdm = self.upoly.vandermonde([1])
 
         # flux derivative vandermonde
-        self.dfa = np.zeros((nvar, nupts, neles))
+        self.dfa = np.zeros((nvar, nupts - 1, neles))
         self.dfvdm = self.dfpoly.vandermonde(self.upts)
 
     def set_intg(self, intg):
@@ -140,7 +162,7 @@ class system:
             setattr(self, f"u{bank}", np.zeros((nvar, nupts, neles)))
         self.u = self.u0
 
-    def RHS(self, ubank=0):
+    def RHS(self, ubank):
         nvar = self.nvar
         nupts = self.nupts
         deg = self.deg
@@ -168,20 +190,15 @@ class system:
             self.uR[:, :, 0:-1] = soln[:, -1, :]
 
         # SET BOUNDARY CONDITIONS
-        bcs = "periodic"
-        if bcs == "wall":
+        if self.bc == "wall":
             self.uL[:, 0] = self.uR[:, 0]
             self.uR[:, -1] = self.uL[:, -1]
-        elif bcs == "perodic":
+        elif self.bc == "periodic":
             self.uL[:, :, 0] = self.uL[:, :, -1]
-            self.uR[:, :, -1] = self.uL[:, :, -1]
+            self.uR[:, :, -1] = self.uR[:, :, 0]
 
         # compute common fluxes
         rusanov(self.uL, self.uR, self.fc)
-
-        # compute g' of correction functions at solution points
-        c = 0  # Vincent constant 0 = nodal DG
-        gL, gR = vcjg(deg, c, self.upts, der=True)
 
         # Begin building of negdivconf
 
@@ -189,23 +206,20 @@ class system:
         self.dfa[:] = self.dfpoly.diff_coeff(self.fa)
         self.dfpoly.evaluate(self.negdivconf, self.dfvdm, self.dfa)
 
-        # compute discontinuous flux at interfaces
-        fl = np.zeros((nvar, 1, neles))
-        self.upoly.evaluate(fl, self.lvdm, self.fa)
-        fr = np.zeros((nvar, 1, neles))
-        self.upoly.evaluate(fr, self.rvdm, self.fa)
-
-        # add the left jumps to tdivconf
+        # evaluate + add the left jumps to tdivconf
+        self.upoly.evaluate(self.flr, self.lvdm, self.fa)
         self.negdivconf += np.einsum(
-            "ij...,j...->ij...", self.fc[:, :, 0:-1] - fl, self.gL
+            "ij...,j...->ij...", self.fc[:, :, 0:-1] - self.flr, self.gL
         )
-        # add the right jumps to tdivconf
+
+        # eval + add the right jumps to tdivconf
+        self.upoly.evaluate(self.flr, self.rvdm, self.fa)
         self.negdivconf += np.einsum(
-            "ij...,j...->ij...", self.fc[:, :, 1::] - fr, self.gR
+            "ij...,j...->ij...", self.fc[:, :, 1::] - self.flr, self.gR
         )
 
         # transform to neg flux in physical coords
-        self.negdivconf *= -self.Jac
+        self.negdivconf *= self.Jac
 
     def noop(*args, **kwargs):
         pass
@@ -218,7 +232,7 @@ class system:
         self.x = np.mean(eles, axis=-1)[np.newaxis, :] + np.einsum(
             "i,j->ij", self.upts, h / 2.0
         )
-        self.Jac = h / 2.0
+        self.Jac = 2.0 / h
 
     def set_ics(self, pris):
         # density
@@ -227,6 +241,9 @@ class system:
         self.u[1, :] = pris[1] * pris[0]
         # total energy
         self.u[2, :] = 0.5 * pris[0] * pris[1] ** 2 + pris[2] / (gamma - 1.0)
+
+    def set_bcs(self, bc):
+        self.bc = bc
 
     def plot(self):
         rho = self.u[0]
@@ -246,14 +263,22 @@ if __name__ == "__main__":
     p = 3
     neles = 5
     quad = "gauss-legendre"
-    intg = "rk1"
+    intg = "rk3"
     a = system(p, quad)
 
     a.create_grid(neles)
+    a.set_bcs("periodic")
     a.set_intg(intg)
     a.set_RHS()
 
     a.set_ics([np.sin(2.0 * np.pi * a.x) + 2.0, 1.0, 1.0])
+    # a.set_ics([1.0, 1.0, 1.0])
+    # a.plot()
 
-    # a.RHS()
+    dt = 1e-5
+    # niter = 100
+    while a.t < 0.1:
+    # while a.niter < niter:
+        a.intg.step(a, dt)
+    print(a.t, a.niter)
     a.plot()

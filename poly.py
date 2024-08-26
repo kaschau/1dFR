@@ -1,6 +1,6 @@
 import numpy as np
 from numpy.polynomial.legendre import Legendre as L
-from numpy.polynomial.legendre import legder as Lp
+from numpy.polynomial.legendre import legder as dL
 from numpy.polynomial.legendre import legvander
 from math import factorial as fac
 
@@ -20,7 +20,7 @@ class BasePoly:
 
     @staticmethod
     def diff_coeff(a):
-        return Lp(a, axis=1)
+        return dL(a, axis=1)
 
 
 
@@ -47,12 +47,16 @@ class LegendrePoly(BasePoly):
 
     def dbasis_at(self, x):
         deg = self.deg
-        # return sum(
-        #     [
-        #         binom(deg, k) * binom(deg + k, k) * 0.5**k * k * (x - 1) ** (k - 1)
-        #         for k in range(deg + 1)
-        #     ]
-        # )
-        c = np.zeros(deg + 1)
-        c[-1] = 1.0
-        return L(Lp(c))(x)
+        if deg > 0:
+            return sum(
+                [
+                    binom(deg, k) * binom(deg + k, k) * 0.5**k * k * (x - 1) ** (k - 1)
+                    for k in range(1, deg + 1)
+                ]
+            )
+        else:
+            return np.array([2 for _ in range(len(x))])
+
+        # c = np.zeros(deg + 1)
+        # c[-1] = 1.0
+        # return L(dL(c))(x)
