@@ -112,6 +112,17 @@ class system:
         else:
             self.fpts_in_upts = False
 
+        # create solution point inverse/vandermonde matrix
+        self.uvdm = self.upoly.vandermonde(self.upts)
+        self.invudm = np.linalg.inv(self.uvdm)
+
+        # left and right solution vandermonde
+        self.lvdm = self.upoly.vandermonde([-1])
+        self.rvdm = self.upoly.vandermonde([1])
+
+        # flux derivative vandermonde
+        self.dfvdm = self.dfpoly.vandermonde(self.upts)
+
         # compute g' of correction functions at solution points
         c = 0  # Vincent constant 0 = nodal DG
         self.gL, self.gR = vcjg(deg, c, self.upts, der=True)
@@ -132,26 +143,26 @@ class system:
         neles = self.neles
         nupts = self.nupts
         # RHS arrays
+        # solution modes
         self.ua = np.zeros((nvar, nupts, neles))
+        # solution point fluxes
         self.f = np.zeros((nvar, nupts, neles))
+        # flux poly'l modes
         self.fa = np.zeros((nvar, nupts, neles))
+        # solution @ eta=-1
         self.uL = np.zeros((nvar, 1, neles + 1))
+        # solution @ eta=1
         self.uR = np.zeros((nvar, 1, neles + 1))
+        # continuous flux values
         self.fc = np.zeros((nvar, 1, neles + 1))
-        self.flr = np.zeros((nvar, 1, neles))
-        self.negdivconf = np.zeros((nvar, nupts, neles))
-
-        # create solution point inverse/vandermonde matrix
-        self.uvdm = self.upoly.vandermonde(self.upts)
-        self.invudm = np.linalg.inv(self.uvdm)
-
-        # left and right solution vandermonde
-        self.lvdm = self.upoly.vandermonde([-1])
-        self.rvdm = self.upoly.vandermonde([1])
-
-        # flux derivative vandermonde
+        # flux derivative modes
         self.dfa = np.zeros((nvar, nupts - 1, neles))
-        self.dfvdm = self.dfpoly.vandermonde(self.upts)
+        # flux polyl @ eta=-1
+        self.fl = np.zeros((nvar, 1, neles))
+        # flux polyl @ eta=1
+        self.fr = np.zeros((nvar, 1, neles))
+        # dudt physical
+        self.negdivconf = np.zeros((nvar, nupts, neles))
 
     def set_intg(self, intg):
         nvar = self.nvar
@@ -163,10 +174,6 @@ class system:
         self.u = self.u0
 
     def RHS(self, ubank):
-        nvar = self.nvar
-        nupts = self.nupts
-        deg = self.deg
-        neles = self.neles
 
         soln = getattr(self, f"u{ubank}")
 
@@ -206,20 +213,20 @@ class system:
         self.dfa[:] = self.dfpoly.diff_coeff(self.fa)
         self.dfpoly.evaluate(self.negdivconf, self.dfvdm, self.dfa)
 
-        # evaluate + add the left jumps to tdivconf
-        self.upoly.evaluate(self.flr, self.lvdm, self.fa)
+        # evaluate + add the left jumps to negdivconf
+        self.upoly.evaluate(self.fl, self.lvdm, self.fa)
         self.negdivconf += np.einsum(
-            "ij...,j...->ij...", self.fc[:, :, 0:-1] - self.flr, self.gL
+            "ij...,j...->ij...", self.fc[:, :, 0:-1] - self.fl, self.gL
         )
 
-        # eval + add the right jumps to tdivconf
-        self.upoly.evaluate(self.flr, self.rvdm, self.fa)
+        # eval + add the right jumps to negdivconf
+        self.upoly.evaluate(self.fr, self.rvdm, self.fa)
         self.negdivconf += np.einsum(
-            "ij...,j...->ij...", self.fc[:, :, 1::] - self.flr, self.gR
+            "ij...,j...->ij...", self.fc[:, :, 1::] - self.fr, self.gR
         )
 
         # transform to neg flux in physical coords
-        self.negdivconf *= self.Jac
+        self.negdivconf *= -self.invJac
 
     def noop(*args, **kwargs):
         pass
@@ -232,7 +239,7 @@ class system:
         self.x = np.mean(eles, axis=-1)[np.newaxis, :] + np.einsum(
             "i,j->ij", self.upts, h / 2.0
         )
-        self.Jac = 2.0 / h
+        self.invJac = 2.0 / h
 
     def set_ics(self, pris):
         # density
@@ -260,10 +267,10 @@ class system:
 
 
 if __name__ == "__main__":
-    p = 3
-    neles = 5
+    p = 2
+    neles = 2
     quad = "gauss-legendre"
-    intg = "rk3"
+    intg = "rk1"
     a = system(p, quad)
 
     a.create_grid(neles)
@@ -275,10 +282,10 @@ if __name__ == "__main__":
     # a.set_ics([1.0, 1.0, 1.0])
     # a.plot()
 
-    dt = 1e-5
-    # niter = 100
-    while a.t < 0.1:
-    # while a.niter < niter:
+    dt = 1e-3
+    niter = 1
+    # while a.t < 0.1:
+    while a.niter < niter:
         a.intg.step(a, dt)
     print(a.t, a.niter)
     a.plot()
