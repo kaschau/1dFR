@@ -1,5 +1,7 @@
 import numpy as np
 from poly import LegendrePoly
+from integrators import BaseIntegrator
+from util import subclass_where
 from pathlib import Path
 from matplotlib import pyplot as plt
 
@@ -79,18 +81,20 @@ def vcjg(k, c, x, der=False):
         Lkm = Legkm.dbasis_at
         Lkp = Legkp.dbasis_at
 
-    g = lambda x: 0.5 * (Lk(x) + (etak * Lkm(x) + Lkp(x)) / (1 + etak))
-    gr = g(x)
-    gl = g(-x)
+    def g(x, etak):
+        return 0.5 * (Lk(x) + (etak * Lkm(x) + Lkp(x)) / (1 + etak))
+
+    gr = g(x, etak)
+    gl = g(-x, etak)
 
     return gl, gr
 
 
 class system:
-    def __init__(self, p, neles, solpts, bcs="perodic"):
+    def __init__(self, p, solpts):
         self.nvar = nvar = 3
-        self.neles = neles
         self.deg = deg = p
+        self.neles = neles
         self.nupts = nupts = p + 1
 
         self.upoly = LegendrePoly(deg)
@@ -103,48 +107,70 @@ class system:
         else:
             self.fpts_in_upts = False
 
+    def set_RHS(self):
+        nvar = self.nvar
+        neles = self.neles
+        nupts = self.nupts
+        #RHS arrays
+        self.ua = np.zeros((nvar, nupts, neles))
+        self.f = np.zeros((nvar, nupts, neles))
+        self.fa = np.zeros((nvar, nupts, neles))
+        self.uL = np.zeros((nvar, 1, neles + 1))
+        self.uR = np.zeros((nvar, 1, neles + 1))
+        self.fc = np.zeros((nvar, 1, neles + 1))
+        self.negdivconf = np.zeros((nvar, nupts, neles))
+
         # create solution point inverse/vandermonde matrix
         self.uvdm = self.upoly.vandermonde(self.upts)
         self.invudm = np.linalg.inv(self.uvdm)
 
-        # left and right vandermonde
+        # left and right solution vandermonde
         self.lvdm = self.upoly.vandermonde([-1])
         self.rvdm = self.upoly.vandermonde([1])
 
-        # create grid
-        self.x = np.zeros((nupts, neles))
-        self.Jac = np.zeros((nupts, neles))
-        self.create_grid()
+        # flux derivative vandermonde
+        self.dfa = np.zeros((nvar, nupts, neles))
+        self.dfvdm = self.dfpoly.vandermonde(self.upts)
 
-        # create initial conditions
-        self.u = np.zeros((nvar, nupts, neles))
-        self.set_ics()
+    def set_intg(self, intg):
+        nvar = self.nvar
+        nupts = self.nupts
+        # create integrator
+        self.intg = subclass_where(BaseIntegrator, name=intg)()
+        for bank in range(self.intg.nbanks):
+            setattr(self, f'u{bank}', np.zeros((nvar, nupts, neles)))
+        self.u = self.u0
+
+
+    def RHS(self, ubank = 0):
+        nvar = self.nvar
+        nupts = self.nupts
+        deg = self.deg
+        neles = self.neles
+
+        soln = getattr(self, f'u{ubank}')
 
         # create solution poly'l
-        self.ua = np.zeros((nvar, nupts, neles))
-        self.upoly.compute_coeff(self.ua, self.u, self.invudm)
+        self.upoly.compute_coeff(self.ua, soln, self.invudm)
 
         # compute pointwise fluxes
-        self.f = np.zeros((nvar, nupts, neles))
-        flux(self.u, self.f)
+        flux(soln, self.f)
 
         # compute flux poly'l
-        self.fa = np.zeros((nvar, nupts, neles))
         self.upoly.compute_coeff(self.fa, self.f, self.invudm)
 
         # interpolate solution to faces
-        self.uL = np.zeros((nvar, 1, neles + 1))
-        self.uR = np.zeros((nvar, 1, neles + 1))
         if not self.fpts_in_upts:
             # interpolate solution to left face
             self.upoly.evaluate(self.uL[:, :, 1::], self.lvdm, self.ua)
             # interpolate solution to right face
             self.upoly.evaluate(self.uR[:, :, 0:-1], self.rvdm, self.ua)
         else:
-            self.uL[:,:,1::] = self.u[:,0,:]
-            self.uR[:,:,0:-1] = self.u[:,-1,:]
+            self.uL[:, :, 1::] = soln[:, 0, :]
+            self.uR[:, :, 0:-1] = soln[:, -1, :]
 
         # SET BOUNDARY CONDITIONS
+        bcs = "periodic"
         if bcs == "wall":
             self.uL[:, 0] = self.uR[:, 0]
             self.uR[:, -1] = self.uL[:, -1]
@@ -153,19 +179,17 @@ class system:
             self.uR[:, :, -1] = self.uL[:, :, -1]
 
         # compute common fluxes
-        self.fc = np.zeros((nvar, 1, neles + 1))
         rusanov(self.uL, self.uR, self.fc)
 
         # compute g' of correction functions at solution points
         c = 0  # Vincent constant 0 = nodal DG
-        self.gL, self.gR = vcjg(deg, c, self.upts, der=True)
+        gL, gR = vcjg(deg, c, self.upts, der=True)
 
         # Begin building of negdivconf
-        self.tdivconf = np.zeros((nvar, nupts, neles))
 
         # compute flux derivative at solution points
-        dfa = self.dfpoly.diff_coeff(self.fa)
-        self.dfpoly.evaluate(self.tdivconf, self.dfpoly.vandermonde(self.upts), dfa)
+        self.dfa[:] = self.dfpoly.diff_coeff(self.fa)
+        self.dfpoly.evaluate(self.negdivconf, self.dfvdm, self.dfa)
 
         # compute discontinuous flux at interfaces
         fl = np.zeros((nvar, 1, neles))
@@ -174,38 +198,65 @@ class system:
         self.upoly.evaluate(fr, self.rvdm, self.fa)
 
         # add the left jumps to tdivconf
-        self.tdivconf += np.einsum('ij...,j...->ij...', self.fc[:, :, 0:-1] - fl, self.gL)
+        self.negdivconf += np.einsum(
+            "ij...,j...->ij...", self.fc[:, :, 0:-1] - fl, self.gL
+        )
         # add the right jumps to tdivconf
-        self.tdivconf += np.einsum('ij...,j...->ij...', self.fc[:, :, 1::] - fr, self.gR)
+        self.negdivconf += np.einsum(
+            "ij...,j...->ij...", self.fc[:, :, 1::] - fr, self.gR
+        )
 
         # transform to neg flux in physical coords
-        self.negdivconf = -self.Jac*self.tdivconf
+        self.negdivconf *= -self.Jac
 
     def noop(*args, **kwargs):
         pass
 
-    def create_grid(self):
-        neles = self.neles
+    def create_grid(self, neles):
         eles = np.zeros((neles, 2))
         eles[:, 0] = np.linspace(0, 1, neles + 1)[0:-1]
         eles[:, 1] = np.linspace(0, 1, neles + 1)[1::]
         h = eles[:, 1] - eles[:, 0]
-        self.x[:] = np.mean(eles, axis=-1)[np.newaxis, :] + np.einsum(
+        self.x = np.mean(eles, axis=-1)[np.newaxis, :] + np.einsum(
             "i,j->ij", self.upts, h / 2.0
         )
-        self.Jac[:] = h / 2.0
+        self.Jac = h / 2.0
 
-    def set_ics(self):
+    def set_ics(self, pris):
+
         # density
-        self.u[0, :] = 1.0
+        self.u[0, :] = pris[0]
         # momentum
-        self.u[1, :] = 1.0
+        self.u[1, :] = pris[1]*pris[0]
         # total energy
-        self.u[2, :] = 1.0
+        self.u[2, :] = 0.5*pris[1]**2 + pris[2]/(1.0-gamma)
+
+    def plot(self):
+        rho = self.u[0]
+        v = self.u[1] / rho
+        rhoE = self.u[2]
+        gamma = 1.4
+
+        p = (gamma - 1.0) * (rhoE - 0.5 * rho * v**2)
+
+        plt.plot(self.x.ravel(order='F'), self.u[0].ravel(order='F'), label="rho")
+        plt.plot(self.x.ravel(order='F'), p.ravel(order='F'), label="p")
+        plt.plot(self.x.ravel(order='F'), v.ravel(order='F'), label="v")
+        plt.show()
 
 
 if __name__ == "__main__":
     p = 3
     neles = 5
     quad = "gauss-legendre"
-    a = system(p, neles, quad)
+    intg = "rk1"
+    a = system(p, quad)
+
+    a.create_grid(neles)
+    a.set_intg(intg)
+    a.set_RHS()
+
+    a.set_ics([1.2, 1.0, 1.0])
+
+    # a.RHS()
+    a.plot()
