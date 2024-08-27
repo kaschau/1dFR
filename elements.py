@@ -171,7 +171,7 @@ class system:
 
         # SET BOUNDARY CONDITIONS
         if self.bc == "wall":
-            self.uL[:, :, 0] = self.uL[:, :, 0]
+            self.uL[:, :, 0] = self.uR[:, :, 0]
             self.uR[:, :, -1] = self.uL[:, :, -1]
         elif self.bc == "periodic":
             self.uL[:, :, 0] = self.uL[:, :, -1]
