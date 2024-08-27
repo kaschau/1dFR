@@ -1,16 +1,21 @@
 import numpy as np
 from poly import LegendrePoly
 from integrators import BaseIntegrator
+from flux import BaseFlux
 from util import subclass_where
 from pathlib import Path
 from matplotlib import pyplot as plt
 
-gamma = 1.4
-np.seterr(all='raise')
-plt.style.use("/Users/kschau/Dropbox/machines/config/matplotlib/stylelib/whitePresentation.mplstyle")
+
+np.seterr(all="raise")
+plt.style.use(
+    "/Users/kschau/Dropbox/machines/config/matplotlib/stylelib/whitePresentation.mplstyle"
+)
 
 
-def get_quad_rules(p, rule):
+def get_quad_rules(config):
+    p = config["p"]
+    rule = config["quad"]
     if "lobatto" in rule:
         fname = f"/quadrules/gauss-legendre-lobatto-n{p+1}-d{2*(p)-1}-spu.txt"
         direct = str(Path(__file__).parent)
@@ -20,42 +25,6 @@ def get_quad_rules(p, rule):
     else:
         data = np.polynomial.legendre.leggauss(p + 1)
         return data[0]
-
-
-def flux(u, f):
-    rho = u[0]
-    v = u[1] / rho
-    rhoE = u[2]
-
-    p = (gamma - 1.0) * (rhoE - 0.5 * rho * v**2)
-
-    f[0] = u[1]
-    f[1] = u[1] * v + p
-    f[2] = (rhoE + p) * v
-
-    return p, v
-
-
-def rusanov(uL, uR, f):
-    # wavespeed
-    fL = np.zeros(f.shape)
-    fR = np.zeros(f.shape)
-
-    pL = np.zeros((f.shape[-1]))
-    pR = np.zeros((f.shape[-1]))
-
-    vL = np.zeros((f.shape[-1]))
-    vR = np.zeros((f.shape[-1]))
-
-    pL[:], vL[:] = flux(uL, fL)
-    pR[:], vR[:] = flux(uR, fR)
-
-    lam = np.maximum(
-        np.abs(uL) + np.sqrt(gamma * pL / uL[0]),
-        np.abs(uR) + np.sqrt(gamma * pR / uR[0]),
-    )
-
-    f[:] = 0.5 * (fL + fR - lam * (uR - uL))
 
 
 def vcjg(k, c, x, der=False):
@@ -94,20 +63,20 @@ def vcjg(k, c, x, der=False):
 
 
 class system:
-    def __init__(self, p, solpts):
+    def __init__(self, config):
+        self.config = config
         self.t = 0.0
         self.niter = 0
 
         self.nvar = nvar = 3
-        self.deg = deg = p
-        self.neles = neles
-        self.nupts = nupts = p + 1
+        self.deg = deg = config["p"]
+        self.nupts = nupts = deg + 1
 
         self.upoly = LegendrePoly(deg)
         self.dfpoly = LegendrePoly(deg - 1)
 
         # get num solution points
-        self.upts = get_quad_rules(p, solpts)
+        self.upts = get_quad_rules(config)
         if min(self.upts) < -0.99999999:
             self.fpts_in_upts = True
         else:
@@ -138,6 +107,9 @@ class system:
         # plt.legend()
         # plt.grid(visible=True)
         # plt.show()
+
+        # set flux
+        self.flux = subclass_where(BaseFlux, name=config["intflux"])(config)
 
     def set_RHS(self):
         nvar = self.nvar
@@ -182,7 +154,7 @@ class system:
         self.upoly.compute_coeff(self.ua, soln, self.invudm)
 
         # compute pointwise fluxes
-        flux(soln, self.f)
+        self.flux.flux(soln, self.f)
 
         # compute flux poly'l
         self.upoly.compute_coeff(self.fa, self.f, self.invudm)
@@ -207,7 +179,7 @@ class system:
             self.uR[:, :, -1] = self.uR[:, :, 0]
 
         # compute common fluxes
-        rusanov(self.uL, self.uR, self.fc)
+        self.flux.intflux(self.uL, self.uR, self.fc)
 
         # Begin building of negdivconf
 
@@ -242,6 +214,7 @@ class system:
             "i,j->ij", self.upts, h / 2.0
         )
         self.invJac = 2.0 / h
+        self.neles = neles
 
     def set_ics(self, pris):
         # density
@@ -249,7 +222,9 @@ class system:
         # momentum
         self.u0[1, :] = pris[1] * pris[0]
         # total energy
-        self.u0[2, :] = 0.5 * pris[0] * pris[1] ** 2 + pris[2] / (gamma - 1.0)
+        self.u0[2, :] = 0.5 * pris[0] * pris[1] ** 2 + pris[2] / (
+            self.config["gamma"] - 1.0
+        )
 
     def set_bcs(self, bc):
         self.bc = bc
@@ -259,9 +234,14 @@ class system:
         v = self.u0[1] / rho
         rhoE = self.u0[2]
 
-        p = (gamma - 1.0) * (rhoE - 0.5 * rho * v**2)
+        p = (self.config["gamma"] - 1.0) * (rhoE - 0.5 * rho * v**2)
 
-        plt.plot(self.x.ravel(order="F"), self.u0[0].ravel(order="F"), label="rho", marker='o')
+        plt.plot(
+            self.x.ravel(order="F"),
+            self.u0[0].ravel(order="F"),
+            label="rho",
+            marker="o",
+        )
         plt.plot(self.x.ravel(order="F"), p.ravel(order="F"), label="p", marker="o")
         plt.plot(self.x.ravel(order="F"), v.ravel(order="F"), label="v", marker="o")
         plt.legend(loc="upper right")
@@ -273,15 +253,19 @@ class system:
 
 
 if __name__ == "__main__":
-    p = 4
-    neles = 11
-    quad = "gauss-legendre-lobatto"
-    intg = "rk3"
-    a = system(p, quad)
+    config = {
+        "p": 4,
+        "quad": "gauss-legendre-lobatto",
+        "intg": "rk3",
+        "intflux": "rusanov",
+        "gamma": 1.4,
+    }
+    a = system(config)
 
+    neles = 11
     a.create_grid(neles)
     a.set_bcs("periodic")
-    a.set_intg(intg)
+    a.set_intg(config["intg"])
     a.set_RHS()
 
     a.set_ics([np.sin(2.0 * np.pi * a.x) + 2.0, 1.0, 1.0])
@@ -291,7 +275,7 @@ if __name__ == "__main__":
     niter = 140
     a.plot(f"oneD_{a.niter:06d}.png")
     while a.t < 1.0:
-    # while a.niter < niter:
+        # while a.niter < niter:
         a.intg.step(a, dt)
-        if a.niter%1000 == 0:
+        if a.niter % 1000 == 0:
             a.plot(f"oneD_{a.niter:06d}.png")
