@@ -74,7 +74,7 @@ class system:
         self.upts = get_quad_rules(config)
 
         # test if flux points are part of solution points
-        if min(self.upts) < -0.99999999:
+        if -1 in self.upts:
             self.fpts_in_upts = True
         else:
             self.fpts_in_upts = False
@@ -95,7 +95,7 @@ class system:
         self.gL, self.gR = vcjg(deg, c, self.upts, der=True)
 
         # set interpolation to face
-        if not self.fpts_in_upts:
+        if self.fpts_in_upts:
             self._u_to_f = self._u_to_f_closed
         else:
             self._u_to_f = self._u_to_f_open
@@ -140,15 +140,16 @@ class system:
 
     def _u_to_f_closed(self):
         # REMEMBER, RIGHT interface is LEFT side of element
+        self.uL[:, 0, 1::] = self.soln[:, -1, :]
+        self.uR[:, 0, 0:-1] = self.soln[:, 0, :]
+
+    def _u_to_f_open(self):
+        # REMEMBER, RIGHT interface is LEFT side of element
         # interpolate solution to left face
         self.upoly.evaluate(self.uL[:, :, 1::], self.rvdm, self.ua)
         # interpolate solution to right face
         self.upoly.evaluate(self.uR[:, :, 0:-1], self.lvdm, self.ua)
 
-    def _u_to_f_open(self):
-        # REMEMBER, RIGHT interface is LEFT side of element
-        self.uL[:, 0, 1::] = self.soln[:, -1, :]
-        self.uR[:, 0, 0:-1] = self.soln[:, 0, :]
 
     def _bc_wall(self):
         self.uL[:, :, 0] = self.uR[:, :, 0]
@@ -180,7 +181,7 @@ class system:
         # compute pointwise fluxes
         self.flux.flux(self.soln, self.f)
 
-        # compute flux poly'l
+        # compute flux poly'l coeffs
         self.upoly.compute_coeff(self.fa, self.f, self.invvudm)
 
         # compute common fluxes
@@ -208,7 +209,7 @@ class system:
         # transform to neg flux in physical coords
         self.negdivconf *= -self.invJac
 
-    def RHS(self, ubank):
+    def _RHS(self, ubank):
 
         self.soln = getattr(self, f"u{ubank}")
 
@@ -247,23 +248,27 @@ class system:
             self.config["gamma"] - 1.0
         )
 
+    def run(self):
+        while self.t < self.config["tend"]:
+            if self.niter % config["nout"] == 0:
+                plot(a, f"{config["outfname"]}_{a.niter:06d}.png")
+            self.intg.step(self, self.config["dt"])
+
+
 if __name__ == "__main__":
     config = {
         "p": 4,
-        "quad": "gauss-legendre",
+        "quad": "gauss-legendre-lobatto",
         "intg": "rk3",
         "intflux": "rusanov",
         "gamma": 1.4,
         "nout": 1000,
         "bc": "periodic",
         "mesh": "mesh.npy",
+        "dt": 1e-4,
+        "tend": 1.0,
+        "outfname": "oneD",
     }
     a = system(config)
     a.set_ics([np.sin(2.0 * np.pi * a.x) + 2.0, 1.0, 1.0])
-
-    dt = 1e-4
-    plot(a, f"oneD_{a.niter:06d}.png")
-    while a.t < 1.0:
-        a.intg.step(a, dt)
-        if a.niter % config["nout"] == 0:
-            plot(a, f"oneD_{a.niter:06d}.png")
+    a.run()
