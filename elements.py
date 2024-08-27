@@ -137,14 +137,13 @@ class system:
         # dudt physical
         self.negdivconf = np.zeros((nvar, nupts, neles))
 
-    def set_intg(self, intg):
+    def set_intg(self):
         nvar = self.nvar
         nupts = self.nupts
         # create integrator
-        self.intg = subclass_where(BaseIntegrator, name=intg)()
+        self.intg = subclass_where(BaseIntegrator, name=config["intg"])()
         for bank in range(self.intg.nbanks):
             setattr(self, f"u{bank}", np.zeros((nvar, nupts, neles)))
-        self.u = self.u0
 
     def RHS(self, ubank):
 
@@ -230,9 +229,10 @@ class system:
         self.bc = bc
 
     def plot(self, fname=None):
-        rho = self.u0[0]
-        v = self.u0[1] / rho
-        rhoE = self.u0[2]
+        u = self.u0
+        rho = u[0]
+        v = u[1] / rho
+        rhoE = u[2]
 
         p = (self.config["gamma"] - 1.0) * (rhoE - 0.5 * rho * v**2)
 
@@ -265,7 +265,7 @@ if __name__ == "__main__":
     neles = 11
     a.create_grid(neles)
     a.set_bcs("periodic")
-    a.set_intg(config["intg"])
+    a.set_intg()
     a.set_RHS()
 
     a.set_ics([np.sin(2.0 * np.pi * a.x) + 2.0, 1.0, 1.0])
