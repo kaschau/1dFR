@@ -12,9 +12,11 @@ class rk1(BaseIntegrator):
         self.nbanks = 1
 
     def step(self, system, dt):
-        system._RHS(0)
 
+        system.RHS(0)
         system.u0 += dt * system.negdivconf
+        system.postprocess(0)
+
         system.t += dt
         system.niter += 1
 
@@ -28,18 +30,22 @@ class rk3(BaseIntegrator):
         self.nbanks = 2
 
     def step(self, system, dt):
-        # stage 1
-        system._RHS(0)
+        # store first stage (u0 already processed)
         system.u1[:] = system.u0[:]
+        # stage 1
+        system.RHS(0)
         system.u0 += dt * system.negdivconf
+        system.postprocess(0)
 
         # stage 2
-        system._RHS(0)
+        system.RHS(0)
         system.u0 = 0.75 * system.u1 + 0.25 * system.u0 + 0.25 * system.negdivconf * dt
+        system.postprocess(0)
 
         # stage 3
-        system._RHS(0)
+        system.RHS(0)
         system.u0 = (system.u1 + 2.0 * system.u0 + 2.0 * system.negdivconf * dt) / 3.0
+        system.postprocess(0)
 
         system.t += dt
         system.niter += 1

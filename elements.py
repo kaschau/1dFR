@@ -6,7 +6,11 @@ from util import subclass_where
 from pathlib import Path
 from output import plot
 
-np.seterr(all="raise")
+# np.seterr(all="raise")
+fpdtype_max = 1e10
+
+def noop(*args, **kwargs):
+    pass
 
 def get_quad_rules(config):
     p = config["p"]
@@ -135,8 +139,83 @@ class system:
         # dudt physical
         self.negdivconf = np.zeros((nvar, nupts, neles))
 
-        # set time integration
-        self._set_intg()
+        # create integrator
+        self.intg = subclass_where(BaseIntegrator, name=config["intg"])()
+        for bank in range(self.intg.nbanks):
+            setattr(self, f"u{bank}", np.zeros((nvar, nupts, neles)))
+        self.soln = self.u0
+
+        # see if we are filtering
+        if config["efilt"]:
+            self.entmin = np.zeros(neles)
+            self.compute_emin = self._compute_emin
+            self.entropy_filter = self._entropy_filter
+        else:
+            self.compute_emin = noop
+            self.entropy_filter = noop
+
+    def entropy(self, u):
+        rho = u[0]
+        v = u[1] / rho
+        rhoE = u[2]
+
+        gamma = self.config["gamma"]
+        p = (gamma - 1.0) * (rhoE - 0.5 * rho * v**2)
+
+        return np.where(rho > 0.0, np.log(p*rho**-gamma), fpdtype_max)
+
+    def _compute_emin(self, ubank):
+        # assume uL, uR, and soln are current
+
+        #compute interface entropy
+        sint = np.minimum(self.entropy(self.uL), self.entropy(self.uR))[0,:]
+        #compute element entropy
+        sele = np.min(self.entropy(getattr(self,f"u{ubank}")), axis=0)
+
+        # compute min for elements and interfaces
+        self.entmin[:] = np.minimum(sele, np.minimum(sint[0:-1], sint[1::]))
+
+        #compute min for elements with right neighbors
+        self.entmin[0:-1] = np.minimum(self.entmin[0:-1], self.entmin[1::])
+
+        #compute min for elements with left neighbors
+        self.entmin[1::] = np.minimum(self.entmin[1::], self.entmin[0:-1])
+
+    def _get_minima(self, u, dmin, pmin, emin):
+        rho = u[0]
+        v = u[1] / rho
+        rhoE = u[2]
+
+        gamma = self.config["gamma"]
+        p = (gamma - 1.0) * (rhoE - 0.5 * rho * v**2)
+
+        e = self.entropy(u)
+
+        rho = np.min(rho, axis=0)
+        p = np.min(p, axis=0)
+        e = np.min(e, axis=0)
+
+        return np.minimum(rho, dmin), np.minimum(p, pmin), np.minimum(e, emin)
+
+
+    def _entropy_filter(self, ubank):
+        # assumes entmin is already populated
+        u = getattr(self, f"u{ubank}")
+        dmin = fpdtype_max
+        pmin = fpdtype_max
+        emin = fpdtype_max
+
+        dmin, pmin, emin = self._get_minima(u, dmin, pmin, emin)
+
+        d_min = 1e-4
+        p_min = 1e-4
+        e_tol = 1e-4
+
+        filtidx = np.where(np.bitwise_or(dmin < d_min,
+                                         pmin < p_min,
+                                         emin < self.entmin - e_tol))
+
+        pass
 
     def _u_to_f_closed(self):
         # REMEMBER, RIGHT interface is LEFT side of element
@@ -150,7 +229,6 @@ class system:
         # interpolate solution to right face
         self.upoly.evaluate(self.uR[:, :, 0:-1], self.lvdm, self.ua)
 
-
     def _bc_wall(self):
         self.uL[:, :, 0] = self.uR[:, :, 0]
         self.uR[:, :, -1] = self.uL[:, :, -1]
@@ -158,18 +236,10 @@ class system:
         self.uL[:, :, 0] = self.uL[:, :, -1]
         self.uR[:, :, -1] = self.uR[:, :, 0]
 
-    def _set_intg(self):
-        nvar = self.nvar
-        nupts = self.nupts
-        neles = self.neles
-        # create integrator
-        self.intg = subclass_where(BaseIntegrator, name=config["intg"])()
-        for bank in range(self.intg.nbanks):
-            setattr(self, f"u{bank}", np.zeros((nvar, nupts, neles)))
-
-    def _update_solution_stuff(self):
+    def _update_solution_stuff(self, ubank):
+        u = getattr(self, f"u{ubank}")
         # create solution poly'l
-        self.upoly.compute_coeff(self.ua, self.soln, self.invvudm)
+        self.upoly.compute_coeff(self.ua, u, self.invvudm)
 
         # interpolate solution to faces
         self._u_to_f()
@@ -209,23 +279,25 @@ class system:
         # transform to neg flux in physical coords
         self.negdivconf *= -self.invJac
 
-    def _RHS(self, ubank):
+    def preprocess(self, ubank):
+        self.compute_emin(ubank)
+        self.entropy_filter(ubank)
+
+    def RHS(self, ubank):
+        #assumes entmin is up to date from previous step
 
         self.soln = getattr(self, f"u{ubank}")
 
-        self._update_solution_stuff()
+        self._update_solution_stuff(ubank)
 
         self._update_flux_stuff()
 
         self._build_negdivconf()
 
-
-    def compute_emin(self):
-        pass
-
-    @staticmethod
-    def noop(*args, **kwargs):
-        pass
+    def postprocess(self, ubank):
+        self._update_solution_stuff(ubank)
+        self.compute_emin(ubank)
+        self.entropy_filter(ubank)
 
     def _read_grid(self):
         fname = config["mesh"]
@@ -240,13 +312,16 @@ class system:
 
     def set_ics(self, pris):
         # density
-        self.u0[0, :] = pris[0]
+        self.soln[0, :] = pris[0]
         # momentum
-        self.u0[1, :] = pris[1] * pris[0]
+        self.soln[1, :] = pris[1] * pris[0]
         # total energy
-        self.u0[2, :] = 0.5 * pris[0] * pris[1] ** 2 + pris[2] / (
+        self.soln[2, :] = 0.5 * pris[0] * pris[1] ** 2 + pris[2] / (
             self.config["gamma"] - 1.0
         )
+
+        self._update_solution_stuff(0)
+        self.preprocess(0)
 
     def run(self):
         while self.t < self.config["tend"]:
@@ -268,6 +343,7 @@ if __name__ == "__main__":
         "dt": 1e-4,
         "tend": 1.0,
         "outfname": "oneD",
+        "efilt": True,
     }
     a = system(config)
     a.set_ics([np.sin(2.0 * np.pi * a.x) + 2.0, 1.0, 1.0])
