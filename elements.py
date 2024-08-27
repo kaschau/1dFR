@@ -122,17 +122,17 @@ class system:
         self.f = np.zeros((nvar, nupts, neles))
         # flux poly'l modes
         self.fa = np.zeros((nvar, nupts, neles))
-        # solution @ eta=-1
+        # solution @ Xi=-1
         self.uL = np.zeros((nvar, 1, neles + 1))
-        # solution @ eta=1
+        # solution @ Xi=1
         self.uR = np.zeros((nvar, 1, neles + 1))
         # continuous flux values
         self.fc = np.zeros((nvar, 1, neles + 1))
         # flux derivative modes
         self.dfa = np.zeros((nvar, nupts - 1, neles))
-        # flux polyl @ eta=-1
+        # flux polyl @ Xi=-1
         self.fl = np.zeros((nvar, 1, neles))
-        # flux polyl @ eta=1
+        # flux polyl @ Xi=1
         self.fr = np.zeros((nvar, 1, neles))
         # dudt physical
         self.negdivconf = np.zeros((nvar, nupts, neles))
@@ -264,6 +264,7 @@ if __name__ == "__main__":
         "intg": "rk3",
         "intflux": "rusanov",
         "gamma": 1.4,
+        "nout": 1000
     }
     a = system(config)
 
@@ -274,14 +275,10 @@ if __name__ == "__main__":
     a.set_RHS()
 
     a.set_ics([np.sin(2.0 * np.pi * a.x) + 2.0, 1.0, 1.0])
-    # a.set_ics([1.0, 1.0, 1.0])
 
     dt = 1e-4
-    niter = 140
-    # a.plot(f"oneD_{a.niter:06d}.png")
-    a.plot()
+    a.plot(f"oneD_{a.niter:06d}.png")
     while a.t < 1.0:
-        # while a.niter < niter:
         a.intg.step(a, dt)
-        if a.niter % 1000 == 0:
+        if a.niter % config["nout"] == 0:
             a.plot(f"oneD_{a.niter:06d}.png")
