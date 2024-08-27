@@ -229,6 +229,7 @@ class system:
         self.bc = bc
 
     def plot(self, fname=None):
+        x = self.x
         u = self.u0
         rho = u[0]
         v = u[1] / rho
@@ -236,14 +237,18 @@ class system:
 
         p = (self.config["gamma"] - 1.0) * (rhoE - 0.5 * rho * v**2)
 
-        plt.plot(
-            self.x.ravel(order="F"),
-            self.u0[0].ravel(order="F"),
-            label="rho",
-            marker="o",
-        )
-        plt.plot(self.x.ravel(order="F"), p.ravel(order="F"), label="p", marker="o")
-        plt.plot(self.x.ravel(order="F"), v.ravel(order="F"), label="v", marker="o")
+        for e in range(self.neles):
+            plt.plot(
+                x[:, e],
+                u[0, :, e].ravel(order="F"),
+                c="b",
+                label="rho" if e == 0 else "",
+                marker="o",
+            )
+            plt.plot(
+                x[:, e], p[:, e], label="p" if e == 0 else "", marker="o", c="orange"
+            )
+            plt.plot(x[:, e], v[:, e], label="v" if e == 0 else "", marker="o", c="g")
         plt.legend(loc="upper right")
         if fname:
             plt.savefig(fname)
@@ -273,7 +278,8 @@ if __name__ == "__main__":
 
     dt = 1e-4
     niter = 140
-    a.plot(f"oneD_{a.niter:06d}.png")
+    # a.plot(f"oneD_{a.niter:06d}.png")
+    a.plot()
     while a.t < 1.0:
         # while a.niter < niter:
         a.intg.step(a, dt)
