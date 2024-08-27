@@ -4,14 +4,9 @@ from integrators import BaseIntegrator
 from flux import BaseFlux
 from util import subclass_where
 from pathlib import Path
-from matplotlib import pyplot as plt
-
+from output import plot
 
 np.seterr(all="raise")
-plt.style.use(
-    "/Users/kschau/Dropbox/machines/config/matplotlib/stylelib/whitePresentation.mplstyle"
-)
-
 
 def get_quad_rules(config):
     p = config["p"]
@@ -61,7 +56,6 @@ def vcjg(k, c, x, der=False):
 
     return gl, gr
 
-
 class system:
     def __init__(self, config):
         self.config = config
@@ -72,11 +66,14 @@ class system:
         self.deg = deg = config["p"]
         self.nupts = nupts = deg + 1
 
+        # solution and flux deriv polys
         self.upoly = LegendrePoly(deg)
         self.dfpoly = LegendrePoly(deg - 1)
 
         # get num solution points
         self.upts = get_quad_rules(config)
+
+        # test if flux points are part of solution points
         if min(self.upts) < -0.99999999:
             self.fpts_in_upts = True
         else:
@@ -84,7 +81,7 @@ class system:
 
         # create solution point inverse/vandermonde matrix
         self.uvdm = self.upoly.vandermonde(self.upts)
-        self.invudm = np.linalg.inv(self.uvdm)
+        self.invvudm = np.linalg.inv(self.uvdm)
 
         # left and right solution vandermonde
         self.lvdm = self.upoly.vandermonde([-1])
@@ -97,25 +94,26 @@ class system:
         c = 0  # Vincent constant 0 = nodal DG
         self.gL, self.gR = vcjg(deg, c, self.upts, der=True)
 
-        # xt = np.linspace(-1, 1, 100)
-        # gL, gR = vcjg(deg, c, xt, der=False)
-        # plt.plot(xt, gL, label="l")
-        # plt.plot(xt, gR, label="r")
-        # dgL, dgR = vcjg(deg, c, xt, der=True)
-        # plt.plot(xt, dgL, label="dl")
-        # plt.plot(xt, dgR, label="dr")
-        # plt.legend()
-        # plt.grid(visible=True)
-        # plt.show()
+        # set interpolation to face
+        if not self.fpts_in_upts:
+            self._u_to_f = self._u_to_f_closed
+        else:
+            self._u_to_f = self._u_to_f_open
+
+        # SET BOUNDARY CONDITIONS
+        if config["bc"] == "wall":
+            self._bc = self._bc_wall
+        elif config["bc"] == "periodic":
+            self._bc = self._bc_periodic
 
         # set flux
         self.flux = subclass_where(BaseFlux, name=config["intflux"])(config)
 
-    def set_RHS(self):
-        nvar = self.nvar
+        # read grid
+        self._read_grid()
         neles = self.neles
-        nupts = self.nupts
-        # RHS arrays
+
+        # allocate arrays
         # solution modes
         self.ua = np.zeros((nvar, nupts, neles))
         # solution point fluxes
@@ -137,49 +135,58 @@ class system:
         # dudt physical
         self.negdivconf = np.zeros((nvar, nupts, neles))
 
-    def set_intg(self):
+        # set time integration
+        self._set_intg()
+
+    def _u_to_f_closed(self):
+        # REMEMBER, RIGHT interface is LEFT side of element
+        # interpolate solution to left face
+        self.upoly.evaluate(self.uL[:, :, 1::], self.rvdm, self.ua)
+        # interpolate solution to right face
+        self.upoly.evaluate(self.uR[:, :, 0:-1], self.lvdm, self.ua)
+
+    def _u_to_f_open(self):
+        # REMEMBER, RIGHT interface is LEFT side of element
+        self.uL[:, 0, 1::] = self.soln[:, -1, :]
+        self.uR[:, 0, 0:-1] = self.soln[:, 0, :]
+
+    def _bc_wall(self):
+        self.uL[:, :, 0] = self.uR[:, :, 0]
+        self.uR[:, :, -1] = self.uL[:, :, -1]
+    def _bc_periodic(self):
+        self.uL[:, :, 0] = self.uL[:, :, -1]
+        self.uR[:, :, -1] = self.uR[:, :, 0]
+
+    def _set_intg(self):
         nvar = self.nvar
         nupts = self.nupts
+        neles = self.neles
         # create integrator
         self.intg = subclass_where(BaseIntegrator, name=config["intg"])()
         for bank in range(self.intg.nbanks):
             setattr(self, f"u{bank}", np.zeros((nvar, nupts, neles)))
 
-    def RHS(self, ubank):
-
-        soln = getattr(self, f"u{ubank}")
-
+    def _update_solution_stuff(self):
         # create solution poly'l
-        self.upoly.compute_coeff(self.ua, soln, self.invudm)
-
-        # compute pointwise fluxes
-        self.flux.flux(soln, self.f)
-
-        # compute flux poly'l
-        self.upoly.compute_coeff(self.fa, self.f, self.invudm)
+        self.upoly.compute_coeff(self.ua, self.soln, self.invvudm)
 
         # interpolate solution to faces
-        # REMEMBER, RIGHT interface is LEFT side of element
-        if not self.fpts_in_upts:
-            # interpolate solution to left face
-            self.upoly.evaluate(self.uL[:, :, 1::], self.rvdm, self.ua)
-            # interpolate solution to right face
-            self.upoly.evaluate(self.uR[:, :, 0:-1], self.lvdm, self.ua)
-        else:
-            self.uL[:, 0, 1::] = soln[:, -1, :]
-            self.uR[:, 0, 0:-1] = soln[:, 0, :]
+        self._u_to_f()
 
-        # SET BOUNDARY CONDITIONS
-        if self.bc == "wall":
-            self.uL[:, :, 0] = self.uR[:, :, 0]
-            self.uR[:, :, -1] = self.uL[:, :, -1]
-        elif self.bc == "periodic":
-            self.uL[:, :, 0] = self.uL[:, :, -1]
-            self.uR[:, :, -1] = self.uR[:, :, 0]
+        # compute bcs
+        self._bc()
+
+    def _update_flux_stuff(self):
+        # compute pointwise fluxes
+        self.flux.flux(self.soln, self.f)
+
+        # compute flux poly'l
+        self.upoly.compute_coeff(self.fa, self.f, self.invvudm)
 
         # compute common fluxes
         self.flux.intflux(self.uL, self.uR, self.fc)
 
+    def _build_negdivconf(self):
         # Begin building of negdivconf
 
         # compute flux derivative at solution points
@@ -201,19 +208,34 @@ class system:
         # transform to neg flux in physical coords
         self.negdivconf *= -self.invJac
 
+    def RHS(self, ubank):
+
+        self.soln = getattr(self, f"u{ubank}")
+
+        self._update_solution_stuff()
+
+        self._update_flux_stuff()
+
+        self._build_negdivconf()
+
+
+    def compute_emin(self):
+        pass
+
+    @staticmethod
     def noop(*args, **kwargs):
         pass
 
-    def create_grid(self, neles):
-        eles = np.zeros((neles, 2))
-        eles[:, 0] = np.linspace(0, 1, neles + 1)[0:-1]
-        eles[:, 1] = np.linspace(0, 1, neles + 1)[1::]
+    def _read_grid(self):
+        fname = config["mesh"]
+        with open(fname, 'rb') as f:
+            eles = np.load(f)
         h = eles[:, 1] - eles[:, 0]
         self.x = np.mean(eles, axis=-1)[np.newaxis, :] + np.einsum(
             "i,j->ij", self.upts, h / 2.0
         )
         self.invJac = 2.0 / h
-        self.neles = neles
+        self.neles = np.shape(eles)[0]
 
     def set_ics(self, pris):
         # density
@@ -225,60 +247,23 @@ class system:
             self.config["gamma"] - 1.0
         )
 
-    def set_bcs(self, bc):
-        self.bc = bc
-
-    def plot(self, fname=None):
-        x = self.x
-        u = self.u0
-        rho = u[0]
-        v = u[1] / rho
-        rhoE = u[2]
-
-        p = (self.config["gamma"] - 1.0) * (rhoE - 0.5 * rho * v**2)
-
-        for e in range(self.neles):
-            plt.plot(
-                x[:, e],
-                u[0, :, e].ravel(order="F"),
-                c="b",
-                label="rho" if e == 0 else "",
-                marker="o",
-            )
-            plt.plot(
-                x[:, e], p[:, e], label="p" if e == 0 else "", marker="o", c="orange"
-            )
-            plt.plot(x[:, e], v[:, e], label="v" if e == 0 else "", marker="o", c="g")
-        plt.legend(loc="upper right")
-        if fname:
-            plt.savefig(fname)
-            plt.close()
-        else:
-            plt.show()
-
-
 if __name__ == "__main__":
     config = {
         "p": 4,
-        "quad": "gauss-legendre-lobatto",
+        "quad": "gauss-legendre",
         "intg": "rk3",
         "intflux": "rusanov",
         "gamma": 1.4,
-        "nout": 1000
+        "nout": 1000,
+        "bc": "periodic",
+        "mesh": "mesh.npy",
     }
     a = system(config)
-
-    neles = 11
-    a.create_grid(neles)
-    a.set_bcs("periodic")
-    a.set_intg()
-    a.set_RHS()
-
     a.set_ics([np.sin(2.0 * np.pi * a.x) + 2.0, 1.0, 1.0])
 
     dt = 1e-4
-    a.plot(f"oneD_{a.niter:06d}.png")
+    plot(a, f"oneD_{a.niter:06d}.png")
     while a.t < 1.0:
         a.intg.step(a, dt)
         if a.niter % config["nout"] == 0:
-            a.plot(f"oneD_{a.niter:06d}.png")
+            plot(a, f"oneD_{a.niter:06d}.png")
