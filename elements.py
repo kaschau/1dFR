@@ -6,8 +6,9 @@ from util import subclass_where
 from pathlib import Path
 from output import plot
 
-# np.seterr(all="raise")
-fpdtype_max = 1e10
+## np.seterr(all="raise")
+fpdtype_max = np.finfo(np.float64).max
+fpdtype_min = np.finfo(np.float64).eps
 
 def noop(*args, **kwargs):
     pass
@@ -143,11 +144,10 @@ class system:
         self.intg = subclass_where(BaseIntegrator, name=config["intg"])()
         for bank in range(self.intg.nbanks):
             setattr(self, f"u{bank}", np.zeros((nvar, nupts, neles)))
-        self.soln = self.u0
 
         # see if we are filtering
         if config["efilt"]:
-            self.entmin = np.zeros(neles)
+            self.entmin_int = np.zeros(neles + 1)
             self.compute_emin = self._compute_emin
             self.entropy_filter = self._entropy_filter
         else:
@@ -165,23 +165,21 @@ class system:
         return np.where(rho > 0.0, np.log(p*rho**-gamma), fpdtype_max)
 
     def _compute_emin(self, ubank):
-        # assume uL, uR, and soln are current
+        # assume uL, uR, and ubank are current
+        u = getattr(self, f"u{ubank}")
 
         #compute interface entropy
         sint = np.minimum(self.entropy(self.uL), self.entropy(self.uR))[0,:]
         #compute element entropy
-        sele = np.min(self.entropy(getattr(self,f"u{ubank}")), axis=0)
-
-        # compute min for elements and interfaces
-        self.entmin[:] = np.minimum(sele, np.minimum(sint[0:-1], sint[1::]))
+        sele = np.min(self.entropy(u), axis=0)
 
         #compute min for elements with right neighbors
-        self.entmin[0:-1] = np.minimum(self.entmin[0:-1], self.entmin[1::])
+        self.entmin_int[0:-1] = np.minimum(sint[0:-1], sele)
 
         #compute min for elements with left neighbors
-        self.entmin[1::] = np.minimum(self.entmin[1::], self.entmin[0:-1])
+        self.entmin_int[1::] = np.minimum(sint[0:-1], self.entmin_int[1::])
 
-    def _get_minima(self, u, dmin, pmin, emin):
+    def _get_minima(self, u):
         rho = u[0]
         v = u[1] / rho
         rhoE = u[2]
@@ -195,34 +193,96 @@ class system:
         p = np.min(p, axis=0)
         e = np.min(e, axis=0)
 
-        return np.minimum(rho, dmin), np.minimum(p, pmin), np.minimum(e, emin)
+        return rho, p ,e
 
+    def _filter_single(self, umodes, unew, f):
+        umt = np.zeros(umodes.shape)
+        umt[:, 0] = umodes[:, 0]
+        pmax = self.config["p"] + 1
+        v = v2 = 1.0
+        for p in range(1, pmax):
+            v2 *= v*v*f
+            v *= f
+            umt[:, p] = umodes[:, p] * v2
+        # get new solution
+        self.upoly.evaluate(unew, self.uvdm, umt)
+
+        rhonew = unew[0]
+        vnew = unew[1] / rhonew
+        rhoEnew = unew[2]
+
+        gamma = self.config["gamma"]
+        pnew = (gamma - 1.0) * (rhoEnew - 0.5 * rhonew * vnew**2)
+
+        enew = self.entropy(unew)
+
+        return unew, rhonew, pnew, enew
 
     def _entropy_filter(self, ubank):
-        # assumes entmin is already populated
+        # assumes entmin_int is already populated
         u = getattr(self, f"u{ubank}")
-        dmin = fpdtype_max
-        pmin = fpdtype_max
-        emin = fpdtype_max
 
-        dmin, pmin, emin = self._get_minima(u, dmin, pmin, emin)
+        dmin, pmin, emin = self._get_minima(u)
 
         d_min = 1e-4
         p_min = 1e-4
         e_tol = 1e-4
+        f_tol = 1e-4
+
+        # get min entropy for element and neighbors
+        e_min = np.minimum(emin, np.minimum(self.entmin_int[0:-1], self.entmin_int[1::]))
 
         filtidx = np.where(np.bitwise_or(dmin < d_min,
                                          pmin < p_min,
-                                         emin < self.entmin - e_tol))
+                                         emin < e_min - e_tol))[0]
 
-        pass
+        for idx in filtidx:
+            f = 1.0
+            flow = 0.0
+            fhigh = f
 
-    def _u_to_f_closed(self):
+            umodes = np.copy(self.ua[:,:,idx])
+            unew = np.copy(u[:,:,idx])
+
+            i = 0
+            while (i < self.config["efniter"]) or (fhigh - flow > f_tol):
+                i += 1
+
+                ## ##
+                ## import matplotlib.pyplot as plt
+                ## plt.plot(np.linspace(-1,1,5),u[0,:,idx], label="OG")
+                ## plt.plot(np.linspace(-1,1,5),unew[0], marker='o', label="new")
+                ## plt.plot([-1,1], [umodes[0,0], umodes[0,0]], label="mean")
+                ## plt.legend()
+                ## plt.show()
+                ## ##
+
+                f = 0.5*(flow + fhigh)
+
+                unew, d, p, e = self._filter_single(umodes, unew, f)
+
+
+                if (np.any(d < d_min) or
+                    np.any(p < p_min) or
+                    np.any(e < e_min[idx] - e_tol)):
+                    fhigh = f
+                else:
+                    flow = f
+
+            # Update final solution with filtered values
+            u[:,:,idx] = unew
+
+            # update min interface entropy
+            self.entmin_int[idx] = min(np.min(e), self.entmin_int[idx])
+            self.entmin_int[idx+1] = min(np.min(e), self.entmin_int[idx+1])
+
+    def _u_to_f_closed(self, ubank):
+        u = getattr(self, f"u{ubank}")
         # REMEMBER, RIGHT interface is LEFT side of element
-        self.uL[:, 0, 1::] = self.soln[:, -1, :]
-        self.uR[:, 0, 0:-1] = self.soln[:, 0, :]
+        self.uL[:, 0, 1::] = u[:, -1, :]
+        self.uR[:, 0, 0:-1] = u[:, 0, :]
 
-    def _u_to_f_open(self):
+    def _u_to_f_open(self, *args):
         # REMEMBER, RIGHT interface is LEFT side of element
         # interpolate solution to left face
         self.upoly.evaluate(self.uL[:, :, 1::], self.rvdm, self.ua)
@@ -241,15 +301,16 @@ class system:
         # create solution poly'l
         self.upoly.compute_coeff(self.ua, u, self.invvudm)
 
-        # interpolate solution to faces
-        self._u_to_f()
+        # interpolate solution to face
+        self._u_to_f(ubank)
 
         # compute bcs
         self._bc()
 
-    def _update_flux_stuff(self):
+    def _update_flux_stuff(self, ubank):
+        u = getattr(self, f"u{ubank}")
         # compute pointwise fluxes
-        self.flux.flux(self.soln, self.f)
+        self.flux.flux(u, self.f)
 
         # compute flux poly'l coeffs
         self.upoly.compute_coeff(self.fa, self.f, self.invvudm)
@@ -284,13 +345,11 @@ class system:
         self.entropy_filter(ubank)
 
     def RHS(self, ubank):
-        #assumes entmin is up to date from previous step
-
-        self.soln = getattr(self, f"u{ubank}")
+        #assumes entmin_int is up to date from previous step
 
         self._update_solution_stuff(ubank)
 
-        self._update_flux_stuff()
+        self._update_flux_stuff(ubank)
 
         self._build_negdivconf()
 
@@ -311,14 +370,17 @@ class system:
         self.neles = np.shape(eles)[0]
 
     def set_ics(self, pris):
+        soln = self.u0
         # density
-        self.soln[0, :] = pris[0]
+        soln[0, :] = pris[0]
         # momentum
-        self.soln[1, :] = pris[1] * pris[0]
+        soln[1, :] = pris[1] * pris[0]
         # total energy
-        self.soln[2, :] = 0.5 * pris[0] * pris[1] ** 2 + pris[2] / (
+        soln[2, :] = 0.5 * pris[0] * pris[1] ** 2 + pris[2] / (
             self.config["gamma"] - 1.0
         )
+
+        ## soln[0,0,0] = -0.05
 
         self._update_solution_stuff(0)
         self.preprocess(0)
@@ -344,6 +406,7 @@ if __name__ == "__main__":
         "tend": 1.0,
         "outfname": "oneD",
         "efilt": True,
+        "efniter": 20,
     }
     a = system(config)
     a.set_ics([np.sin(2.0 * np.pi * a.x) + 2.0, 1.0, 1.0])

@@ -1,5 +1,4 @@
 import numpy as np
-from numpy.polynomial.legendre import Legendre as L
 from numpy.polynomial.legendre import legder as dL
 from numpy.polynomial.legendre import legvander
 from math import factorial as fac
@@ -11,12 +10,12 @@ def binom(n, k):
 
 class BasePoly:
     @staticmethod
-    def evaluate(bank, vdm, a):
-        bank[:] = np.einsum("ji...,ki...->kj...", vdm, a)
+    def evaluate(y, vdm, a):
+        y[:] = np.einsum("xp...,vp...->vx...", vdm, a)
 
     @staticmethod
     def compute_coeff(a, y, invdm):
-        a[:] = np.einsum("ji...,ki...->kj...", invdm, y)
+        a[:] = np.einsum("xp...,vp...->vx...", invdm, y)
 
     @staticmethod
     def diff_coeff(a):
