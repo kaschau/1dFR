@@ -106,10 +106,7 @@ class system:
             self._u_to_f = self._u_to_f_open
 
         # SET BOUNDARY CONDITIONS
-        if config["bc"] == "wall":
-            self._bc = self._bc_wall
-        elif config["bc"] == "periodic":
-            self._bc = self._bc_periodic
+        self._bc = getattr(self, f"_bc_{config["bc"]}")
 
         # set flux
         self.flux = subclass_where(BaseFlux, name=config["intflux"])(config)
@@ -125,9 +122,9 @@ class system:
         self.f = np.zeros((nvar, nupts, neles))
         # flux poly'l modes
         self.fa = np.zeros((nvar, nupts, neles))
-        # solution @ Xi=-1
+        # solution @ Xi=1 (left side of interfaces)
         self.uL = np.zeros((nvar, 1, neles + 1))
-        # solution @ Xi=1
+        # solution @ Xi=-1 (right side of interfaces)
         self.uR = np.zeros((nvar, 1, neles + 1))
         # continuous flux values
         self.fc = np.zeros((nvar, 1, neles + 1))
@@ -169,15 +166,16 @@ class system:
         u = getattr(self, f"u{ubank}")
 
         #compute interface entropy
-        sint = np.minimum(self.entropy(self.uL), self.entropy(self.uR))[0,:]
+        self.entmin_int = np.minimum(self.entropy(self.uL), self.entropy(self.uR))[0,:]
+
         #compute element entropy
         sele = np.min(self.entropy(u), axis=0)
 
         #compute min for elements with right neighbors
-        self.entmin_int[0:-1] = np.minimum(sint[0:-1], sele)
+        self.entmin_int[0:-1] = np.minimum(sele, self.entmin_int[0:-1])
 
         #compute min for elements with left neighbors
-        self.entmin_int[1::] = np.minimum(sint[0:-1], self.entmin_int[1::])
+        self.entmin_int[1::] = np.minimum(sele, self.entmin_int[1::])
 
     def _get_minima(self, u):
         rho = u[0]
@@ -274,7 +272,7 @@ class system:
 
             # update min interface entropy
             self.entmin_int[idx] = min(np.min(e), self.entmin_int[idx])
-            self.entmin_int[idx+1] = min(np.min(e), self.entmin_int[idx+1])
+            self.entmin_int[idx + 1] = min(np.min(e), self.entmin_int[idx + 1])
 
     def _u_to_f_closed(self, ubank):
         u = getattr(self, f"u{ubank}")
@@ -328,13 +326,13 @@ class system:
         # evaluate + add the left jumps to negdivconf
         self.upoly.evaluate(self.fl, self.lvdm, self.fa)
         self.negdivconf += np.einsum(
-            "ij...,j...->ij...", self.fc[:, :, 0:-1] - self.fl, self.gL
+            "vx...,x...->vx...", self.fc[:, :, 0:-1] - self.fl, self.gL
         )
 
         # eval + add the right jumps to negdivconf
         self.upoly.evaluate(self.fr, self.rvdm, self.fa)
         self.negdivconf += np.einsum(
-            "ij...,j...->ij...", self.fc[:, :, 1::] - self.fr, self.gR
+            "vx...,x...->vx...", self.fc[:, :, 1::] - self.fr, self.gR
         )
 
         # transform to neg flux in physical coords
@@ -400,7 +398,8 @@ if __name__ == "__main__":
         "intflux": "rusanov",
         "gamma": 1.4,
         "nout": 1000,
-        "bc": "periodic",
+        # "bc": "periodic",
+        "bc": "wall",
         "mesh": "mesh.npy",
         "dt": 1e-4,
         "tend": 1.0,
@@ -409,5 +408,12 @@ if __name__ == "__main__":
         "efniter": 20,
     }
     a = system(config)
-    a.set_ics([np.sin(2.0 * np.pi * a.x) + 2.0, 1.0, 1.0])
+
+    rho = np.where(a.x < 0.5, 1.0, 0.125)
+    p = np.where(a.x < 0.5, 1.0, 0.1)
+    v = 0
+
+    a.set_ics([rho, v, p])
+
+    # a.set_ics([np.sin(2.0 * np.pi * a.x) + 2.0, 1.0, 1.0])
     a.run()
