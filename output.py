@@ -47,6 +47,8 @@ def plot(system, fname=None):
     plt.title(f"rule = {quad}, neles = {system.neles}, $p={system.order}$")
     if fname:
         plt.savefig(fname)
+        plt.clf()
         plt.close()
     else:
         plt.show()
+        plt.close()
