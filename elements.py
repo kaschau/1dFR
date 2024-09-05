@@ -183,8 +183,8 @@ class system:
         #compute interface entropy
         if not self.fpts_in_upts:
             self.u_to_f()
-            self.entmin_int = np.minimum(self.entropy(self.uL), self.entmin_int)[0,:]
-            self.entmin_int = np.minimum(self.entropy(self.uR), self.entmin_int)[0,:]
+            self.entmin_int = np.minimum(np.min(self.entropy(self.uL), axis=0), self.entmin_int)
+            self.entmin_int = np.minimum(np.min(self.entropy(self.uR), axis=0), self.entmin_int)
 
     def get_minima(self, u, modes):
         rho = u[0]
@@ -202,9 +202,9 @@ class system:
 
         if not self.fpts_in_upts:
             #interpolate to faces
-            uL = np.zeros(u.shape)
+            uL = np.zeros((self.nvar, 1, u.shape[-1]))
             self.upoly.evaluate(uL, self.rvdm, modes)
-            uR = np.zeros(u.shape)
+            uR = np.zeros((self.nvar, 1, u.shape[-1]))
             self.upoly.evaluate(uR, self.lvdm, modes)
 
             rhoL = uL[0]
@@ -213,9 +213,9 @@ class system:
             pL = (gamma - 1.0) * (rhoEL - 0.5 * rhoL * vL**2)
             eL = self.entropy(uL)
 
-            rho = np.minimum(rho, rhoL)
-            p = np.minimum(p, pL)
-            e = np.minimum(e, eL)
+            rho = np.minimum(rho, np.min(rhoL, axis=0))
+            p = np.minimum(p, np.min(pL, axis=0))
+            e = np.minimum(e, np.min(eL, axis=0))
 
             rhoR = uR[0]
             vR = u[1] / rhoR
@@ -223,10 +223,9 @@ class system:
             pR = (gamma - 1.0) * (rhoER - 0.5 * rhoR * vR**2)
             eR = self.entropy(uR)
 
-            rho = np.minimum(rho, rhoR)
-            p = np.minimum(p, pR)
-            e = np.minimum(e, eR)
-
+            rho = np.minimum(rho, np.min(rhoR, axis=0))
+            p = np.minimum(p, np.min(pR, axis=0))
+            e = np.minimum(e, np.min(eR, axis=0))
 
         return rho, p ,e
 
@@ -262,8 +261,8 @@ class system:
                                          emin < e_min - e_tol)))[0]
 
         for idx in filtidx:
-            umodes = self.ua[:,:,idx]
-            unew = np.copy(u[:,:,idx])
+            umodes = self.ua[:,:,idx:idx+1]
+            unew = np.copy(u[:,:,idx:idx+1])
 
             f = 1.0
             flow = 0.0
@@ -294,14 +293,14 @@ class system:
                     flow = f
 
             # Update final solution with filtered values
-            u[:,:,idx] = unew
+            u[:,:,idx:idx+1] = unew
 
             # update modes
-            self.upoly.compute_coeff(self.ua[:, :, idx], unew, self.invvudm)
+            self.upoly.compute_coeff(self.ua[:, :, idx:idx+1], unew, self.invvudm)
 
             # update min interface entropy
-            self.entmin_int[idx] = min(e, self.entmin_int[idx])
-            self.entmin_int[idx + 1] = min(e, self.entmin_int[idx + 1])
+            self.entmin_int[idx] = min(e[0], self.entmin_int[idx])
+            self.entmin_int[idx + 1] = min(e[0], self.entmin_int[idx + 1])
 
     def _u_to_f_closed(self, ubank):
         u = getattr(self, f"u{ubank}")
@@ -401,16 +400,20 @@ class system:
         self.neles = np.shape(eles)[0]
 
     def set_ics(self, pris):
-        soln = self.u0
+        ubank = 0
+        u = getattr(self, f"u{ubank}")
         # density
-        soln[0, :] = pris[0]
+        u[0, :] = pris[0]
         # momentum
-        soln[1, :] = pris[1] * pris[0]
+        u[1, :] = pris[1] * pris[0]
         # total energy
-        soln[2, :] = 0.5 * pris[0] * pris[1] ** 2 + pris[2] / (
+        u[2, :] = 0.5 * pris[0] * pris[1] ** 2 + pris[2] / (
             self.config["gamma"] - 1.0
         )
 
+        self.upoly.compute_coeff(self.ua, u, self.invvudm)
+        self.u_to_f(0)
+        self.bc()
         self.update_solution_stuff(0)
 
     def run(self):
@@ -423,7 +426,7 @@ class system:
 if __name__ == "__main__":
     config = {
         "p": 3,
-        "quad": "gauss-legendre-lobatto",
+        "quad": "gauss-legendre",
         "intg": "rk3",
         "intflux": "rusanov",
         "gamma": 1.4,
