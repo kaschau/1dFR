@@ -6,7 +6,7 @@ from util import subclass_where
 from pathlib import Path
 from output import plot
 
-## np.seterr(all="raise")
+# np.seterr(all="raise")
 fpdtype_max = np.finfo(np.float64).max
 fpdtype_min = np.finfo(np.float64).eps
 
@@ -143,7 +143,7 @@ class system:
             setattr(self, f"u{bank}", np.zeros((nvar, nupts, neles)))
 
         # see if we are filtering
-        if config["efilt"]:
+        if config["efilt"] and config["p"] > 0:
             self.entmin_int = np.zeros(neles + 1)
             self.compute_emin = self._compute_emin
             self.entropy_filter = self._entropy_filter
@@ -159,7 +159,7 @@ class system:
         gamma = self.config["gamma"]
         p = (gamma - 1.0) * (rhoE - 0.5 * rho * v**2)
 
-        return np.where(rho > 0.0, np.log(p*rho**-gamma), fpdtype_max)
+        return np.where(np.bitwise_and(rho > 0.0, p > 0.0), np.log(p*rho**-gamma), fpdtype_max)
 
     def _compute_emin(self, ubank):
         # assume uL, uR, and ubank are current
@@ -193,15 +193,13 @@ class system:
 
         return rho, p ,e
 
-    def _filter_single(self, umodes, unew, f):
-        umt = np.zeros(umodes.shape)
-        umt[:, 0] = umodes[:, 0]
+    def _filter_single(self, umt, unew, f):
         pmax = self.config["p"] + 1
         v = v2 = 1.0
         for p in range(1, pmax):
             v2 *= v*v*f
             v *= f
-            umt[:, p] = umodes[:, p] * v2
+            umt[:, p] *= v2
         # get new solution
         self.upoly.evaluate(unew, self.uvdm, umt)
 
@@ -214,42 +212,44 @@ class system:
 
         enew = self.entropy(unew)
 
-        return unew, rhonew, pnew, enew
+        return min(rhonew), min(pnew), min(enew)
 
     def _entropy_filter(self, ubank):
         # assumes entmin_int is already populated
         u = getattr(self, f"u{ubank}")
 
-        dmin, pmin, emin = self._get_minima(u)
 
-        d_min = 1e-4
-        p_min = 1e-4
-        e_tol = 1e-4
-        f_tol = 1e-4
+        d_min = 1e-6
+        p_min = 1e-6
+        e_tol = 0.0 #1e-6
+        f_tol = 1e-6
 
         # get min entropy for element and neighbors
-        e_min = np.minimum(emin, np.minimum(self.entmin_int[0:-1], self.entmin_int[1::]))
+        e_min = np.minimum(self.entmin_int[0:-1], self.entmin_int[1::])
+
+        # compute rho, p, e for all elements
+        dmin, pmin, emin = self._get_minima(u)
 
         filtidx = np.where(np.bitwise_or(dmin < d_min,
-                                         pmin < p_min,
-                                         emin < e_min - e_tol))[0]
+                                         np.bitwise_or(pmin < p_min,
+                                         emin < e_min - e_tol)))[0]
 
         for idx in filtidx:
+            umodes = self.ua[:,:,idx]
+            unew = np.copy(u[:,:,idx])
+
             f = 1.0
             flow = 0.0
             fhigh = f
 
-            umodes = np.copy(self.ua[:,:,idx])
-            unew = np.copy(u[:,:,idx])
-
             i = 0
-            while (i < self.config["efniter"]) or (fhigh - flow > f_tol):
+            while (i < self.config["efniter"]) and (fhigh - flow > f_tol):
                 i += 1
 
                 ## ##
                 ## import matplotlib.pyplot as plt
-                ## plt.plot(np.linspace(-1,1,5),u[0,:,idx], label="OG")
-                ## plt.plot(np.linspace(-1,1,5),unew[0], marker='o', label="new")
+                ## plt.plot(np.linspace(-1,1,self.nupts),u[0,:,idx], label="OG")
+                ## plt.plot(np.linspace(-1,1,self.nupts),unew[0], marker='o', label="new")
                 ## plt.plot([-1,1], [umodes[0,0], umodes[0,0]], label="mean")
                 ## plt.legend()
                 ## plt.show()
@@ -257,12 +257,11 @@ class system:
 
                 f = 0.5*(flow + fhigh)
 
-                unew, d, p, e = self._filter_single(umodes, unew, f)
+                d, p, e = self._filter_single(np.copy(umodes), unew, f)
 
-
-                if (np.any(d < d_min) or
-                    np.any(p < p_min) or
-                    np.any(e < e_min[idx] - e_tol)):
+                if (d < d_min or
+                    p < p_min or
+                    e < e_min[idx] - e_tol):
                     fhigh = f
                 else:
                     flow = f
@@ -270,9 +269,12 @@ class system:
             # Update final solution with filtered values
             u[:,:,idx] = unew
 
+            # update modes
+            self.upoly.compute_coeff(self.ua[:, :, idx], unew, self.invvudm)
+
             # update min interface entropy
-            self.entmin_int[idx] = min(np.min(e), self.entmin_int[idx])
-            self.entmin_int[idx + 1] = min(np.min(e), self.entmin_int[idx + 1])
+            self.entmin_int[idx] = min(e, self.entmin_int[idx])
+            self.entmin_int[idx + 1] = min(e, self.entmin_int[idx + 1])
 
     def _u_to_f_closed(self, ubank):
         u = getattr(self, f"u{ubank}")
@@ -343,8 +345,8 @@ class system:
         self.entropy_filter(ubank)
 
     def RHS(self, ubank):
-        #assumes entmin_int is up to date from previous step
 
+        #assumes entmin_int is up to date from previous step
         self._update_solution_stuff(ubank)
 
         self._update_flux_stuff(ubank)
@@ -353,8 +355,8 @@ class system:
 
     def postprocess(self, ubank):
         self._update_solution_stuff(ubank)
-        self.compute_emin(ubank)
         self.entropy_filter(ubank)
+        self.compute_emin(ubank)
 
     def _read_grid(self):
         fname = config["mesh"]
@@ -378,8 +380,6 @@ class system:
             self.config["gamma"] - 1.0
         )
 
-        ## soln[0,0,0] = -0.05
-
         self._update_solution_stuff(0)
         self.preprocess(0)
 
@@ -392,26 +392,37 @@ class system:
 
 if __name__ == "__main__":
     config = {
-        "p": 4,
+        "p": 1,
         "quad": "gauss-legendre-lobatto",
         "intg": "rk3",
         "intflux": "rusanov",
         "gamma": 1.4,
-        "nout": 1000,
+        "nout": 0.2/1e-4,
         # "bc": "periodic",
         "bc": "wall",
         "mesh": "mesh.npy",
         "dt": 1e-4,
-        "tend": 1.0,
+        "tend": 0.2,
         "outfname": "oneD",
         "efilt": True,
         "efniter": 20,
     }
     a = system(config)
+    half = int(a.neles/2)
+
+    rho = np.zeros(a.x.shape)
+    rho[:, 0:half] = 1.0
+    rho[:, half::] = 0.125
+
+    p = np.zeros(a.x.shape)
+    p[:, 0:half] = 1.0
+    p[:, half::] = 0.1
+
+    v = 0
 
     rho = np.where(a.x < 0.5, 1.0, 0.125)
+    v = 0.0
     p = np.where(a.x < 0.5, 1.0, 0.1)
-    v = 0
 
     a.set_ics([rho, v, p])
 
