@@ -1,3 +1,4 @@
+from webbrowser import get
 import numpy as np
 from poly import LegendrePoly
 from integrators import BaseIntegrator
@@ -68,12 +69,12 @@ class system:
         self.niter = 0
 
         self.nvar = nvar = 3
-        self.deg = deg = config["p"]
-        self.nupts = nupts = deg + 1
+        self.order = order = config["p"]
+        self.nupts = nupts = order + 1
 
         # solution and flux deriv polys
-        self.upoly = LegendrePoly(deg)
-        self.dfpoly = LegendrePoly(deg - 1)
+        self.upoly = LegendrePoly(order)
+        self.dfpoly = LegendrePoly(order - 1)
 
         # get num solution points
         self.upts = get_quad_rules(config)
@@ -97,22 +98,22 @@ class system:
 
         # compute g' of correction functions at solution points
         c = 0  # Vincent constant 0 = nodal DG
-        self.gL, self.gR = vcjg(deg, c, self.upts, der=True)
+        self.gL, self.gR = vcjg(order, c, self.upts, der=True)
 
         # set interpolation to face
         if self.fpts_in_upts:
-            self._u_to_f = self._u_to_f_closed
+            self.u_to_f = self._u_to_f_closed
         else:
-            self._u_to_f = self._u_to_f_open
+            self.u_to_f = self._u_to_f_open
 
         # SET BOUNDARY CONDITIONS
-        self._bc = getattr(self, f"_bc_{config["bc"]}")
+        self.bc = getattr(self, f"_bc_{config["bc"]}")
 
         # set flux
         self.flux = subclass_where(BaseFlux, name=config["intflux"])(config)
 
         # read grid
-        self._read_grid()
+        self.read_grid()
         neles = self.neles
 
         # allocate arrays
@@ -143,15 +144,20 @@ class system:
             setattr(self, f"u{bank}", np.zeros((nvar, nupts, neles)))
 
         # see if we are filtering
-        if config["efilt"] and config["p"] > 0:
+        self.efilt = self.config["efilt"]
+        if self.efilt and self.order > 0:
             self.entmin_int = np.zeros(neles + 1)
-            self.compute_emin = self._compute_emin
+            self.entropy = getattr(self, f"_entropy_{config["effunc"]}")
+            self.entropy_local = self._entropy_local
             self.entropy_filter = self._entropy_filter
+            self.bcent = self._bcent
         else:
-            self.compute_emin = noop
+            self.entropy = noop
+            self.entropy_local = noop
             self.entropy_filter = noop
+            self.bcent = noop
 
-    def entropy(self, u):
+    def _entropy_physical(self, u):
         rho = u[0]
         v = u[1] / rho
         rhoE = u[2]
@@ -161,23 +167,26 @@ class system:
 
         return np.where(np.bitwise_and(rho > 0.0, p > 0.0), np.log(p*rho**-gamma), fpdtype_max)
 
-    def _compute_emin(self, ubank):
-        # assume uL, uR, and ubank are current
+    def _entropy_local(self, ubank):
+        # assume ubank are current
         u = getattr(self, f"u{ubank}")
-
-        #compute interface entropy
-        self.entmin_int = np.minimum(self.entropy(self.uL), self.entropy(self.uR))[0,:]
 
         #compute element entropy
         sele = np.min(self.entropy(u), axis=0)
 
         #compute min for elements with right neighbors
-        self.entmin_int[0:-1] = np.minimum(sele, self.entmin_int[0:-1])
+        self.entmin_int[0:-1] = sele
 
         #compute min for elements with left neighbors
         self.entmin_int[1::] = np.minimum(sele, self.entmin_int[1::])
 
-    def _get_minima(self, u):
+        #compute interface entropy
+        if not self.fpts_in_upts:
+            self.u_to_f()
+            self.entmin_int = np.minimum(self.entropy(self.uL), self.entmin_int)[0,:]
+            self.entmin_int = np.minimum(self.entropy(self.uR), self.entmin_int)[0,:]
+
+    def get_minima(self, u, modes):
         rho = u[0]
         v = u[1] / rho
         rhoE = u[2]
@@ -191,10 +200,38 @@ class system:
         p = np.min(p, axis=0)
         e = np.min(e, axis=0)
 
+        if not self.fpts_in_upts:
+            #interpolate to faces
+            uL = np.zeros(u.shape)
+            self.upoly.evaluate(uL, self.rvdm, modes)
+            uR = np.zeros(u.shape)
+            self.upoly.evaluate(uR, self.lvdm, modes)
+
+            rhoL = uL[0]
+            vL = u[1] / rhoL
+            rhoEL = u[2]
+            pL = (gamma - 1.0) * (rhoEL - 0.5 * rhoL * vL**2)
+            eL = self.entropy(uL)
+
+            rho = np.minimum(rho, rhoL)
+            p = np.minimum(p, pL)
+            e = np.minimum(e, eL)
+
+            rhoR = uR[0]
+            vR = u[1] / rhoR
+            rhoER = u[2]
+            pR = (gamma - 1.0) * (rhoER - 0.5 * rhoR * vR**2)
+            eR = self.entropy(uR)
+
+            rho = np.minimum(rho, rhoR)
+            p = np.minimum(p, pR)
+            e = np.minimum(e, eR)
+
+
         return rho, p ,e
 
-    def _filter_single(self, umt, unew, f):
-        pmax = self.config["p"] + 1
+    def filter_single(self, umt, unew, f):
+        pmax = self.order + 1
         v = v2 = 1.0
         for p in range(1, pmax):
             v2 *= v*v*f
@@ -203,21 +240,11 @@ class system:
         # get new solution
         self.upoly.evaluate(unew, self.uvdm, umt)
 
-        rhonew = unew[0]
-        vnew = unew[1] / rhonew
-        rhoEnew = unew[2]
-
-        gamma = self.config["gamma"]
-        pnew = (gamma - 1.0) * (rhoEnew - 0.5 * rhonew * vnew**2)
-
-        enew = self.entropy(unew)
-
-        return min(rhonew), min(pnew), min(enew)
+        return self.get_minima(unew, umt)
 
     def _entropy_filter(self, ubank):
         # assumes entmin_int is already populated
         u = getattr(self, f"u{ubank}")
-
 
         d_min = 1e-6
         p_min = 1e-6
@@ -228,7 +255,7 @@ class system:
         e_min = np.minimum(self.entmin_int[0:-1], self.entmin_int[1::])
 
         # compute rho, p, e for all elements
-        dmin, pmin, emin = self._get_minima(u)
+        dmin, pmin, emin = self.get_minima(u, self.ua)
 
         filtidx = np.where(np.bitwise_or(dmin < d_min,
                                          np.bitwise_or(pmin < p_min,
@@ -257,7 +284,7 @@ class system:
 
                 f = 0.5*(flow + fhigh)
 
-                d, p, e = self._filter_single(np.copy(umodes), unew, f)
+                d, p, e = self.filter_single(np.copy(umodes), unew, f)
 
                 if (d < d_min or
                     p < p_min or
@@ -295,19 +322,32 @@ class system:
     def _bc_periodic(self):
         self.uL[:, :, 0] = self.uL[:, :, -1]
         self.uR[:, :, -1] = self.uR[:, :, 0]
+    def _bcent(self):
+        uL = self.uL[:,:,0]
+        eL = self.entropy(uL)
+        self.entmin_int[0] = min(eL[0], self.entmin_int[0])
 
-    def _update_solution_stuff(self, ubank):
+        uR = self.uR[:,:,-1]
+        eR = self.entropy(uR)
+        self.entmin_int[-1] = min(eR[0], self.entmin_int[-1])
+
+    def update_solution_stuff(self, ubank):
         u = getattr(self, f"u{ubank}")
         # create solution poly'l
         self.upoly.compute_coeff(self.ua, u, self.invvudm)
 
+        self.entropy_filter(ubank)
+        # update local entropy
+        self.entropy_local(ubank)
+
         # interpolate solution to face
-        self._u_to_f(ubank)
+        self.u_to_f(ubank)
 
         # compute bcs
-        self._bc()
+        self.bc()
+        self.bcent()
 
-    def _update_flux_stuff(self, ubank):
+    def update_flux_stuff(self, ubank):
         u = getattr(self, f"u{ubank}")
         # compute pointwise fluxes
         self.flux.flux(u, self.f)
@@ -318,7 +358,7 @@ class system:
         # compute common fluxes
         self.flux.intflux(self.uL, self.uR, self.fc)
 
-    def _build_negdivconf(self):
+    def build_negdivconf(self):
         # Begin building of negdivconf
 
         # compute flux derivative at solution points
@@ -340,25 +380,16 @@ class system:
         # transform to neg flux in physical coords
         self.negdivconf *= -self.invJac
 
-    def preprocess(self, ubank):
-        self.compute_emin(ubank)
-        self.entropy_filter(ubank)
-
     def RHS(self, ubank):
 
-        #assumes entmin_int is up to date from previous step
-        self._update_solution_stuff(ubank)
+        # assumes ubank is up to date
+        self.update_solution_stuff(ubank)
 
-        self._update_flux_stuff(ubank)
+        self.update_flux_stuff(ubank)
 
-        self._build_negdivconf()
+        self.build_negdivconf()
 
-    def postprocess(self, ubank):
-        self._update_solution_stuff(ubank)
-        self.entropy_filter(ubank)
-        self.compute_emin(ubank)
-
-    def _read_grid(self):
+    def read_grid(self):
         fname = config["mesh"]
         with open(fname, 'rb') as f:
             eles = np.load(f)
@@ -380,8 +411,7 @@ class system:
             self.config["gamma"] - 1.0
         )
 
-        self._update_solution_stuff(0)
-        self.preprocess(0)
+        self.update_solution_stuff(0)
 
     def run(self):
         while self.t < self.config["tend"]:
@@ -397,7 +427,7 @@ if __name__ == "__main__":
         "intg": "rk3",
         "intflux": "rusanov",
         "gamma": 1.4,
-        "nout": 0.2/1e-4,
+        "nout": int(0.01/1e-4),
         # "bc": "periodic",
         "bc": "wall",
         "mesh": "mesh.npy",
@@ -405,7 +435,8 @@ if __name__ == "__main__":
         "tend": 0.2,
         "outfname": "oneD",
         "efilt": True,
-        "efniter": 20,
+        "effunc": "physical",
+        "efniter": 2,
     }
     a = system(config)
     half = int(a.neles/2)

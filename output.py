@@ -1,7 +1,9 @@
 import matplotlib.pyplot as plt
+
 plt.style.use(
     "/Users/kschau/Dropbox/machines/config/matplotlib/stylelib/whitePresentation.mplstyle"
 )
+
 
 def plot(system, fname=None):
     x = system.x
@@ -11,20 +13,23 @@ def plot(system, fname=None):
     rhoE = u[2]
 
     p = (system.config["gamma"] - 1.0) * (rhoE - 0.5 * rho * v**2)
+    e = system.entropy(u)
 
-    for e in range(system.neles):
+    for el in range(system.neles):
         plt.plot(
-            x[:, e],
-            u[0, :, e].ravel(order="F"),
+            x[:, el],
+            u[0, :, el].ravel(order="F"),
             c="b",
-            label="rho" if e == 0 else "",
+            label="rho" if el == 0 else "",
             marker="o",
         )
         plt.plot(
-            x[:, e], p[:, e], label="p" if e == 0 else "", marker="o", c="orange"
+            x[:, el], p[:, el], label="p" if el == 0 else "", marker="o", c="orange"
         )
-        plt.plot(x[:, e], v[:, e], label="v" if e == 0 else "", marker="o", c="g")
+        plt.plot(x[:, el], v[:, el], label="v" if el == 0 else "", marker="o", c="g")
+        plt.plot(x[:, el], e[:, el], label="e" if el == 0 else "", marker="*", c="r")
     plt.legend(loc="upper right")
+    plt.ylim([-0.2, 1.2])
     if fname:
         plt.savefig(fname)
         plt.close()

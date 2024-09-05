@@ -15,7 +15,6 @@ class rk1(BaseIntegrator):
 
         system.RHS(0)
         system.u0 += dt * system.negdivconf
-        system.postprocess(0)
 
         system.t += dt
         system.niter += 1
@@ -35,17 +34,14 @@ class rk3(BaseIntegrator):
         # stage 1
         system.RHS(0)
         system.u0 += dt * system.negdivconf
-        system.postprocess(0)
 
         # stage 2
         system.RHS(0)
         system.u0 = 0.75 * system.u1 + 0.25 * system.u0 + 0.25 * system.negdivconf * dt
-        system.postprocess(0)
 
         # stage 3
         system.RHS(0)
         system.u0 = (system.u1 + 2.0 * system.u0 + 2.0 * system.negdivconf * dt) / 3.0
-        system.postprocess(0)
 
         system.t += dt
         system.niter += 1
