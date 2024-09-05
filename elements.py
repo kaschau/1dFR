@@ -165,7 +165,7 @@ class system:
         gamma = self.config["gamma"]
         p = (gamma - 1.0) * (rhoE - 0.5 * rho * v**2)
 
-        return np.where(np.bitwise_and(rho > 0.0, p > 0.0), np.log(p*rho**-gamma), fpdtype_max)
+        return np.where(np.bitwise_and(rho > 0.0, p > 0.0), rho*(np.log(p) -gamma*np.log(rho)), fpdtype_max)
 
     def _entropy_local(self, ubank):
         # assume ubank are current
@@ -414,7 +414,7 @@ class system:
         self.update_solution_stuff(0)
 
     def run(self):
-        while self.t < self.config["tend"]:
+        while round(self.t, 5) <= self.config["tend"]:
             if self.niter % config["nout"] == 0:
                 plot(a, f"{config["outfname"]}_{a.niter:06d}.png")
             self.intg.step(self, self.config["dt"])
@@ -422,16 +422,16 @@ class system:
 
 if __name__ == "__main__":
     config = {
-        "p": 1,
+        "p": 3,
         "quad": "gauss-legendre-lobatto",
         "intg": "rk3",
         "intflux": "rusanov",
         "gamma": 1.4,
-        "nout": int(0.01/1e-4),
+        "nout": round(0.01/1e-5),
         # "bc": "periodic",
         "bc": "wall",
         "mesh": "mesh.npy",
-        "dt": 1e-4,
+        "dt": 1e-5,
         "tend": 0.2,
         "outfname": "oneD",
         "efilt": True,
