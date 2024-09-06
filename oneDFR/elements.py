@@ -62,7 +62,7 @@ def vcjg(k, c, x, der=False):
     return gl, gr
 
 class system:
-    def __init__(self, config, ics):
+    def __init__(self, config):
         self.config = config
         self.t = 0.0
         self.niter = 0
@@ -155,9 +155,6 @@ class system:
             self.entropy_local = noop
             self.entropy_filter = noop
             self.bcent = noop
-
-        # last, set ics
-        self.set_ics(ics)
 
     def _entropy_physical(self, u):
         rho = u[0]
