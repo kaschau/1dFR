@@ -1,5 +1,6 @@
 import numpy as np
 
+
 class BaseFlux:
     def __init__(self, config):
         self.config = config
@@ -17,8 +18,10 @@ class BaseFlux:
 
         return p, v
 
+
 class Rusanov(BaseFlux):
     name = "rusanov"
+
     def __init__(self, config):
         super().__init__(config)
 
@@ -46,8 +49,81 @@ class Rusanov(BaseFlux):
 
 class HLLC(BaseFlux):
     name = "hllc"
+
     def __init__(self, config):
         super().__init__(config)
 
     def intflux(self, uL, uR, f):
-        pass
+        gamma = self.config["gamma"]
+
+        rhol = uL[0, 0]
+        rhor = uR[0, 0]
+
+        fl = np.zeros(f.shape)
+        fr = np.zeros(f.shape)
+
+        pl = np.zeros((f.shape[-1]))
+        pr = np.zeros((f.shape[-1]))
+
+        vl = np.zeros((f.shape[-1]))
+        vr = np.zeros((f.shape[-1]))
+
+        pl[:], vl[:] = self.flux(uL, fl)
+        pr[:], vr[:] = self.flux(uR, fr)
+
+        rhoEl = uL[2, 0]
+        pl = (gamma - 1.0) * (rhoEl - 0.5 * rhol * vl**2)
+
+        rhoEr = uR[2, 0]
+        pr = (gamma - 1.0) * (rhoEr - 0.5 * rhor * vr**2)
+
+        # Roe ave H
+        H = (np.sqrt(rhol) * (pr + rhoEr) + np.sqrt(rhor) * (pl + rhoEl)) / (
+            np.sqrt(rhol) * rhor + np.sqrt(rhor) * rhol
+        )
+
+        # Roe ave speed of sound
+        u = (np.sqrt(rhol) * vl + np.sqrt(rhor) * vr) / (np.sqrt(rhol) + np.sqrt(rhor))
+        a = np.sqrt((gamma - 1) * (H - 0.5 * u * u))
+
+        # Estimate l and r wave speed
+        sl = u - a
+        sr = u + a
+        sstar = (pr - pl + rhol * vl * (sl - vl) - rhor * vr * (sr - vr)) / (
+            rhol * (sl - vl) - rhor * (sr - vr)
+        )
+
+        # Star state factors
+        ul_com = (sl - vl) / (sl - sstar)
+        ur_com = (sr - vr) / (sr - sstar)
+
+        usl = np.zeros((3, ul_com.shape[0]))
+        usr = np.zeros((3, ur_com.shape[0]))
+
+        # star state mass
+        usl[0] = ul_com * rhol
+        usr[0] = ur_com * rhor
+
+        # star state momentum
+        usl[1] = ul_com * rhol * sstar
+        usr[1] = ur_com * rhor * sstar
+
+        # star state energy
+        usl[2] = ul_com * (rhoEl + (sstar - vl) * (rhol * sstar + pl / (sl - vl)))
+        usr[2] = ur_com * (rhoEr + (sstar - vr) * (rhor * sstar + pr / (sr - vr)))
+
+        # output
+        idxL = np.where(sl >= 0.0)[0]
+        idxLs = np.where(np.bitwise_and(sl <= 0.0, sstar >= 0.0))[0]
+        idxRs = np.where(np.bitwise_and(sr >= 0.0, sstar <= 0.0))[0]
+        idxR = np.where(sr <= 0.0)[0]
+        for i in range(3):
+            f[i, 0, idxL] = fl[i, 0, idxL]
+
+            fsl = fl[i, 0, idxLs] + sl[idxLs] * (usl[i, idxLs] - uL[i, 0, idxLs])
+            f[i, 0, idxLs] = fsl
+
+            fsr = fr[i, 0, idxRs] + sr[idxRs] * (usr[i, idxRs] - uR[i, 0, idxRs])
+            f[i, 0, idxRs] = fsr
+
+            f[i, 0, idxR] = fr[i, 0, idxR]

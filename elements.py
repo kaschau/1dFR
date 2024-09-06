@@ -1,4 +1,3 @@
-from webbrowser import get
 import numpy as np
 from poly import LegendrePoly
 from integrators import BaseIntegrator
@@ -165,7 +164,11 @@ class system:
         gamma = self.config["gamma"]
         p = (gamma - 1.0) * (rhoE - 0.5 * rho * v**2)
 
-        return np.where(np.bitwise_and(rho > 0.0, p > 0.0), rho*(np.log(p) -gamma*np.log(rho)), fpdtype_max)
+        e = np.ones(p.shape)*fpdtype_max
+        idx = np.where(np.bitwise_and(rho > 0.0, p > 0.0))
+        e[idx] = rho[idx]*(np.log(p[idx]) - gamma*np.log(rho[idx]))
+
+        return e
 
     def _entropy_local(self, ubank):
         # assume ubank are current
@@ -178,7 +181,7 @@ class system:
         self.entmin_int[0:-1] = sele
 
         #compute min for elements with left neighbors
-        self.entmin_int[1::] = np.minimum(sele, self.entmin_int[1::])
+        self.entmin_int[1::] = np.minimum(sele, self.entmin_int[0:-1])
 
         #compute interface entropy
         if not self.fpts_in_upts:
@@ -247,7 +250,7 @@ class system:
 
         d_min = 1e-6
         p_min = 1e-6
-        e_tol = 0.0 #1e-6
+        e_tol = 1e-6
         f_tol = 1e-6
 
         # get min entropy for element and neighbors
@@ -414,6 +417,9 @@ class system:
         self.upoly.compute_coeff(self.ua, u, self.invvudm)
         self.u_to_f(0)
         self.bc()
+
+        self.entropy_local(0)
+        self.bcent()
         self.update_solution_stuff(0)
 
     def run(self):
@@ -425,16 +431,16 @@ class system:
 
 if __name__ == "__main__":
     config = {
-        "p": 3,
-        "quad": "gauss-legendre",
+        "p": 2,
+        "quad": "gauss-legendre-lobatto",
         "intg": "rk3",
-        "intflux": "rusanov",
+        "intflux": "hllc",
         "gamma": 1.4,
-        "nout": round(0.01/1e-5),
+        "nout": round(0.01/1e-4),
         # "bc": "periodic",
         "bc": "wall",
         "mesh": "mesh.npy",
-        "dt": 1e-5,
+        "dt": 1e-4,
         "tend": 0.2,
         "outfname": "oneD",
         "efilt": True,
