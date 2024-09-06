@@ -229,7 +229,7 @@ class system:
             p = np.minimum(p, np.min(pR, axis=0))
             e = np.minimum(e, np.min(eR, axis=0))
 
-        return rho, p ,e
+        return rho, p, e
 
     def filter_single(self, umt, unew, f):
         pmax = self.order + 1

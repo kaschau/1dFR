@@ -394,7 +394,6 @@ if __name__ == "__main__":
     p = np.where(x <= test.x0, test.pL, test.pR)
 
     a.set_ics([rho, v, p])
-    a.run()
     try:
         a.run()
         fname = ""
@@ -421,8 +420,10 @@ if __name__ == "__main__":
     anres["x"] = a.x.ravel(order="F")
 
     error = dict()
+
     for key in frres.keys():
         error[key] = np.linalg.norm(frres[key].ravel(order="F") - anres[key])
 
-    fname += f"test-{testnum}_rule-{config["quad"]}_neles-{a.neles}_p-{a.order}_efniter-{a.config["efniter"]}"
+    quad = "".join([i[0] for i in a.config["quad"].split("-")])
+    fname += f"test-{testnum}_quad-{quad}_neles-{a.neles}_p-{a.order}_efniter-{a.config["efniter"]}"
     plotres(frres, anres, fname)
