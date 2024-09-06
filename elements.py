@@ -62,7 +62,7 @@ def vcjg(k, c, x, der=False):
     return gl, gr
 
 class system:
-    def __init__(self, config):
+    def __init__(self, config, ics):
         self.config = config
         self.t = 0.0
         self.niter = 0
@@ -155,6 +155,9 @@ class system:
             self.entropy_local = noop
             self.entropy_filter = noop
             self.bcent = noop
+
+        # last, set ics
+        self.set_ics(ics)
 
     def _entropy_physical(self, u):
         rho = u[0]
@@ -432,14 +435,13 @@ class system:
 if __name__ == "__main__":
     config = {
         "p": 3,
-        "quad": "gauss-legendre-lobatto",
+        "quad": "gauss-legendre",
         "intg": "rk3",
         "intflux": "hllc",
         "gamma": 1.4,
         "nout": round(0.01/1e-4),
-        # "bc": "periodic",
         "bc": "wall",
-        "mesh": "mesh.npy",
+        "mesh": "mesh-100.npy",
         "dt": 1e-4,
         "tend": 0.2,
         "outfname": "oneD",
@@ -447,24 +449,21 @@ if __name__ == "__main__":
         "effunc": "physical",
         "efniter": 20,
     }
-    a = system(config)
-    half = int(a.neles/2)
 
-    rho = np.zeros(a.x.shape)
+
+    neles = int(config['mesh'].split("-")[1].split(".")[0])
+    half = int(neles/2)
+
+    rho = np.zeros((config["p"]+1,neles))
     rho[:, 0:half] = 1.0
     rho[:, half::] = 0.125
 
-    p = np.zeros(a.x.shape)
+    v = 0
+
+    p = np.zeros(rho.shape)
     p[:, 0:half] = 1.0
     p[:, half::] = 0.1
 
-    v = 0
+    a = system(config, [rho,v,p])
 
-    rho = np.where(a.x < 0.5, 1.0, 0.125)
-    v = 0.0
-    p = np.where(a.x < 0.5, 1.0, 0.1)
-
-    a.set_ics([rho, v, p])
-
-    # a.set_ics([np.sin(2.0 * np.pi * a.x) + 2.0, 1.0, 1.0])
     a.run()
