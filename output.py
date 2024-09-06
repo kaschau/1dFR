@@ -47,7 +47,7 @@ def plot(system, fname=None):
     plt.legend(loc="upper right")
     plt.ylim([-0.2, 1.2])
     quad = "".join([i[0] for i in system.config["quad"].split("-")])
-    plt.title(f"rule = {quad}, neles = {system.neles}, $p={system.order}$")
+    plt.title(f"rule = {quad}, neles = {system.neles}, $p={system.order}$, efniter={system.config["efniter"]}")
     if fname:
         plt.savefig(fname)
         plt.clf()

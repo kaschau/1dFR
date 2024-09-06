@@ -431,7 +431,7 @@ class system:
 
 if __name__ == "__main__":
     config = {
-        "p": 2,
+        "p": 3,
         "quad": "gauss-legendre-lobatto",
         "intg": "rk3",
         "intflux": "hllc",
@@ -445,7 +445,7 @@ if __name__ == "__main__":
         "outfname": "oneD",
         "efilt": True,
         "effunc": "physical",
-        "efniter": 2,
+        "efniter": 20,
     }
     a = system(config)
     half = int(a.neles/2)
