@@ -16,7 +16,9 @@ for more.
 """
 import numpy as np
 from oneDFR.elements import system
+import matplotlib.pyplot as plt
 
+np.seterr(all="raise")
 
 def guessP(test):
     pL, rhoL, uL = test.pL, test.rhoL, test.uL
@@ -207,16 +209,16 @@ def solve(test, pts):
     res = {
         "x": np.empty(pts.shape),
         "p": np.empty(pts.shape),
-        "u": np.empty(pts.shape),
+        "v": np.empty(pts.shape),
         "rho": np.empty(pts.shape),
         "energy": np.empty(pts.shape),
     }
     for i, x in enumerate(pts):
         s = (x - x0) / test.t
-        p, u, rho, e = sample(test, pM, uM, s)
+        p, v, rho, e = sample(test, pM, uM, s)
         res["x"][i] = x
         res["p"][i] = p
-        res["u"][i] = u
+        res["v"][i] = v
         res["rho"][i] = rho
         res["energy"][i] = e
 
@@ -323,9 +325,42 @@ class state:
         self.gamma = gamma
 
 
-def simulate(testnum, config):
+def plotres(frres, anres, fname):
 
-    test = state(testnum)
+    marker = "o"
+    x = frres["x"]
+    for el in range(x.shape[-1]):
+        plt.plot(
+            x[:, el],
+            frres["rho"][:, el].ravel(order="F"),
+            c="b",
+            label=r"$\rho$" if el == 0 else "",
+            marker=marker,
+        )
+        plt.plot(
+            x[:, el],
+            frres["p"][:, el],
+            label=r"$p$" if el == 0 else "",
+            marker=marker,
+            c="orange",
+        )
+        plt.plot(
+            x[:, el],
+            frres["v"][:, el],
+            label=r"$v$" if el == 0 else "",
+            marker=marker,
+            c="g",
+        )
+
+    plt.plot(anres["x"], anres["rho"], c="k")
+    plt.plot(anres["x"], anres["p"], c="k")
+    plt.plot(anres["x"], anres["v"], c="k")
+
+    plt.legend()
+    plt.title = fname
+    plt.savefig(fname+".png")
+    plt.clf()
+    plt.close()
 
 
 if __name__ == "__main__":
@@ -343,22 +378,51 @@ if __name__ == "__main__":
         "efniter": 20,
     }
 
-    testnum = 1
+    testnum = 3
     test = state(testnum)
 
     # create system
     config["dt"] = test.dt
     config["tend"] = test.t
     config["outfname"] = f"test_{testnum}"
-    config["nout"] = round(test.t / test.dt)
+    config["nout"] = 0  # round(test.t / test.dt)
     a = system(config)
 
     x = a.x
     rho = np.where(x <= test.x0, test.rhoL, test.rhoR)
-    v = np.where(x <= test.x0, test.vL, test.vR)
+    v = np.where(x <= test.x0, test.uL, test.uR)
     p = np.where(x <= test.x0, test.pL, test.pR)
 
     a.set_ics([rho, v, p])
     a.run()
+    try:
+        a.run()
+        fname = ""
+    except Exception as e:
+        import sys
+        import traceback
 
-    anres = solve(test, x)
+        print(f"{e}")
+        exc_type, exc_value, exc_traceback = sys.exc_info()
+        traceback.print_exception(exc_type, exc_value, exc_traceback)
+        print("NaN Detected")
+        fname = "NAN-"
+        test.t = a.t
+
+    # Flux Reconstruction resultk
+    frres = dict()
+    frres["x"] = x
+    frres["rho"] = a.u0[0]
+    frres["v"] = a.u0[1] / frres["rho"]
+    frres["p"] = (config["gamma"] - 1.0) * (a.u0[2] - 0.5 * frres["rho"] * frres["v"] ** 2)
+
+    # Analyrical Results
+    anres = solve(test, np.ravel(x, order="F"))
+    anres["x"] = a.x.ravel(order="F")
+
+    error = dict()
+    for key in frres.keys():
+        error[key] = np.linalg.norm(frres[key].ravel(order="F") - anres[key])
+
+    fname += f"test-{testnum}_rule-{config["quad"]}_neles-{a.neles}_p-{a.order}_efniter-{a.config["efniter"]}"
+    plotres(frres, anres, fname)

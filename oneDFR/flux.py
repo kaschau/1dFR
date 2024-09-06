@@ -72,10 +72,7 @@ class HLLC(BaseFlux):
         pr[:], vr[:] = self.flux(uR, fr)
 
         rhoEl = uL[2, 0]
-        pl = (gamma - 1.0) * (rhoEl - 0.5 * rhol * vl**2)
-
         rhoEr = uR[2, 0]
-        pr = (gamma - 1.0) * (rhoEr - 0.5 * rhor * vr**2)
 
         # Roe ave H
         H = (np.sqrt(rhol) * (pr + rhoEr) + np.sqrt(rhor) * (pl + rhoEl)) / (
