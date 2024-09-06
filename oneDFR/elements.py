@@ -1,10 +1,10 @@
 import numpy as np
-from poly import LegendrePoly
-from integrators import BaseIntegrator
-from flux import BaseFlux
-from util import subclass_where
+from .poly import LegendrePoly
+from .integrators import BaseIntegrator
+from .flux import BaseFlux
+from .util import subclass_where
 from pathlib import Path
-from output import plot
+from .output import plot
 
 # np.seterr(all="raise")
 fpdtype_max = np.finfo(np.float64).max
@@ -28,7 +28,6 @@ def get_quad_rules(config):
 
 
 def vcjg(k, c, x, der=False):
-    from poly import LegendrePoly
 
     if c == 0:
         etak = 0.0
@@ -211,8 +210,8 @@ class system:
             self.upoly.evaluate(uR, self.lvdm, modes)
 
             rhoL = uL[0]
-            vL = u[1] / rhoL
-            rhoEL = u[2]
+            vL = uL[1] / rhoL
+            rhoEL = uL[2]
             pL = (gamma - 1.0) * (rhoEL - 0.5 * rhoL * vL**2)
             eL = self.entropy(uL)
 
@@ -221,8 +220,8 @@ class system:
             e = np.minimum(e, np.min(eL, axis=0))
 
             rhoR = uR[0]
-            vR = u[1] / rhoR
-            rhoER = u[2]
+            vR = uR[1] / rhoR
+            rhoER = uR[2]
             pR = (gamma - 1.0) * (rhoER - 0.5 * rhoR * vR**2)
             eR = self.entropy(uR)
 
@@ -248,10 +247,22 @@ class system:
         # assumes entmin_int is already populated
         u = getattr(self, f"u{ubank}")
 
-        d_min = 1e-6
-        p_min = 1e-6
-        e_tol = 1e-6
-        f_tol = 1e-6
+        try:
+            d_min = self.config["d_min"]
+        except KeyError:
+            d_min = 1e-6
+        try:
+            p_min = self.config["p_min"]
+        except KeyError:
+            p_min = 1e-6
+        try:
+            e_tol = self.config["e_etol"]
+        except KeyError:
+            e_tol = 1e-6
+        try:
+            f_tol = self.config["f_tol"]
+        except KeyError:
+            f_tol = 1e-6
 
         # get min entropy for element and neighbors
         e_min = np.minimum(self.entmin_int[0:-1], self.entmin_int[1::])
@@ -273,17 +284,8 @@ class system:
 
             i = 0
             while (i < self.config["efniter"]) and (fhigh - flow > f_tol):
-                i += 1
 
-                ## ##
-                ## import matplotlib.pyplot as plt
-                ## plt.plot(np.linspace(-1,1,self.nupts),u[0,:,idx], label="OG")
-                ## plt.plot(np.linspace(-1,1,self.nupts),unew[0], marker='o', label="new")
-                ## plt.plot([-1,1], [umodes[0,0], umodes[0,0]], label="mean")
-                ## plt.legend()
-                ## plt.show()
-                ## ##
-
+                # define new f
                 f = 0.5*(flow + fhigh)
 
                 d, p, e = self.filter_single(np.copy(umodes), unew, f)
@@ -294,6 +296,13 @@ class system:
                     fhigh = f
                 else:
                     flow = f
+
+                i += 1
+
+            # fallback
+            if (d < d_min or p < p_min):
+                f = 0.0
+                d, p, e = self.filter_single(np.copy(umodes), unew, f)
 
             # Update final solution with filtered values
             u[:,:,idx:idx+1] = unew
@@ -392,7 +401,7 @@ class system:
         self.build_negdivconf()
 
     def read_grid(self):
-        fname = config["mesh"]
+        fname = self.config["mesh"]
         with open(fname, 'rb') as f:
             eles = np.load(f)
         h = eles[:, 1] - eles[:, 0]
@@ -424,8 +433,11 @@ class system:
 
     def run(self):
         while round(self.t, 5) <= self.config["tend"]:
-            if self.niter % config["nout"] == 0:
-                plot(a, f"{config["outfname"]}_{a.niter:06d}.png")
+            try:
+                if self.niter % self.config["nout"] == 0:
+                    plot(self, f"{self.config["outfname"]}_{self.niter:06d}.png")
+            except ZeroDivisionError:
+                pass
             self.intg.step(self, self.config["dt"])
 
 
@@ -461,6 +473,6 @@ if __name__ == "__main__":
     p[:, 0:half] = 1.0
     p[:, half::] = 0.1
 
-    a = system(config, [rho,v,p])
-
+    a = system(config)
+    a.set_ics([rho,v,p])
     a.run()
