@@ -17,6 +17,7 @@ for more.
 import numpy as np
 from oneDFR.elements import system
 import matplotlib.pyplot as plt
+from pathlib import Path
 
 np.seterr(all="raise")
 
@@ -378,52 +379,75 @@ if __name__ == "__main__":
         "efniter": 20,
     }
 
-    testnum = 3
+    testnum = 0
     test = state(testnum)
-
-    # create system
     config["dt"] = test.dt
     config["tend"] = test.t
     config["outfname"] = f"test_{testnum}"
     config["nout"] = 0  # round(test.t / test.dt)
-    a = system(config)
-
-    x = a.x
-    rho = np.where(x <= test.x0, test.rhoL, test.rhoR)
-    v = np.where(x <= test.x0, test.uL, test.uR)
-    p = np.where(x <= test.x0, test.pL, test.pR)
-
-    a.set_ics([rho, v, p])
-    try:
-        a.run()
-        fname = ""
-    except Exception as e:
-        import sys
-        import traceback
-
-        print(f"{e}")
-        exc_type, exc_value, exc_traceback = sys.exc_info()
-        traceback.print_exception(exc_type, exc_value, exc_traceback)
-        print("NaN Detected")
-        fname = "NAN-"
-        test.t = a.t
-
-    # Flux Reconstruction resultk
-    frres = dict()
-    frres["x"] = x
-    frres["rho"] = a.u0[0]
-    frres["v"] = a.u0[1] / frres["rho"]
-    frres["p"] = (config["gamma"] - 1.0) * (a.u0[2] - 0.5 * frres["rho"] * frres["v"] ** 2)
-
-    # Analyrical Results
-    anres = solve(test, np.ravel(x, order="F"))
-    anres["x"] = a.x.ravel(order="F")
 
     error = dict()
 
-    for key in frres.keys():
-        error[key] = np.linalg.norm(frres[key].ravel(order="F") - anres[key])
+    space = np.logspace(-0.4,0.4,10)
+    for frho in space:
+        for fmom in space:
+            for fE in space:
 
-    quad = "".join([i[0] for i in a.config["quad"].split("-")])
-    fname += f"test-{testnum}_quad-{quad}_neles-{a.neles}_p-{a.order}_efniter-{a.config["efniter"]}"
-    plotres(frres, anres, fname)
+                print(f"Working on {frho}, {fmom}, {fE}")
+
+                config["efrhopow"] = frho
+                config["efmompow"] = fmom
+                config["efEpow"] = fE
+
+                # create system
+                a = system(config)
+
+                x = a.x
+                rho = np.where(x <= test.x0, test.rhoL, test.rhoR)
+                v = np.where(x <= test.x0, test.uL, test.uR)
+                p = np.where(x <= test.x0, test.pL, test.pR)
+
+                a.set_ics([rho, v, p])
+                try:
+                    a.run()
+                    fname = ""
+                    # Flux Reconstruction resultk
+                    frres = dict()
+                    frres["x"] = x
+                    frres["rho"] = a.u0[0]
+                    frres["v"] = a.u0[1] / frres["rho"]
+                    frres["p"] = (config["gamma"] - 1.0) * (a.u0[2] - 0.5 * frres["rho"] * frres["v"] ** 2)
+
+                    # Analyrical Results
+                    anres = solve(test, np.ravel(x, order="F"))
+                    anres["x"] = a.x.ravel(order="F")
+
+                    for key in frres.keys():
+                        error[key] = np.linalg.norm(frres[key].ravel(order="F") - anres[key])
+                except Exception as e:
+                    import sys
+                    import traceback
+
+                    print(f"{e}")
+                    exc_type, exc_value, exc_traceback = sys.exc_info()
+                    traceback.print_exception(exc_type, exc_value, exc_traceback)
+                    print("NaN Detected")
+                    fname = "NAN-"
+                    test.t = a.t
+                    for key in ["rho", "v", "p"]:
+                        error[key] = "NAN"
+
+                quad = "".join([i[0] for i in a.config["quad"].split("-")])
+                fname += f"test-{testnum}_quad-{quad}_neles-{a.neles}_p-{a.order}_efniter-{a.config["efniter"]}"
+
+                if not Path(fname+".txt").is_file():
+                    with open(f"{fname}.txt", "w") as f:
+                        f.write("frho, fmom, fE, erho, ev, ep\n")
+
+                if fname.startswith("NAN"):
+                    with open(f"{fname}.txt", "a") as f:
+                        f.write(f"{frho}, {fmom}, {fE}, {error["rho"]}, {error["v"]}, {error["p"]}\n")
+                else:
+                    with open(f"{fname}.txt", "a") as f:
+                        f.write(f"{frho}, {fmom}, {fE}, {error["rho"]}, {error["v"]}, {error["p"]}\n")
+                # plotres(frres, anres, fname)

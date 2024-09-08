@@ -233,11 +233,17 @@ class system:
 
     def filter_single(self, umt, unew, f):
         pmax = self.order + 1
-        v = v2 = 1.0
+        vrho = v2rho = vmom = v2mom = vE = v2E = 1.0
         for p in range(1, pmax):
-            v2 *= v*v*f
-            v *= f
-            umt[:, p] *= v2
+            v2rho *= vrho*vrho*f**self.config["efrhopow"]
+            v2mom *= vmom*vmom*f**self.config["efmompow"]
+            v2E *= vE*vE*f**self.config["efEpow"]
+            vrho *= f**self.config["efrhopow"]
+            vmom *= f**self.config["efmompow"]
+            vE *= f**self.config["efEpow"]
+            umt[0, p] *= v2rho
+            umt[1, p] *= v2mom
+            umt[2, p] *= v2E
         # get new solution
         self.upoly.evaluate(unew, self.uvdm, umt)
 
