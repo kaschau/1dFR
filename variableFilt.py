@@ -380,6 +380,13 @@ if __name__ == "__main__":
     }
 
     testnum = 0
+    # rhospace = momspace = Espace =  np.logspace(-0.8,0.6,12)
+    rhospace  = [1.0]
+    momspace = [1.0]
+    Espace = [1.0]
+    norm = "inf"
+
+
     test = state(testnum)
     config["dt"] = test.dt
     config["tend"] = test.t
@@ -387,11 +394,10 @@ if __name__ == "__main__":
     config["nout"] = 0  # round(test.t / test.dt)
 
     error = dict()
-
-    space = np.logspace(-0.4,0.4,10)
-    for frho in space:
-        for fmom in space:
-            for fE in space:
+    normdict = {"inf": np.inf, "L2": 2}
+    for frho in rhospace:
+        for fmom in momspace:
+            for fE in Espace:
 
                 print(f"Working on {frho}, {fmom}, {fE}")
 
@@ -422,8 +428,8 @@ if __name__ == "__main__":
                     anres = solve(test, np.ravel(x, order="F"))
                     anres["x"] = a.x.ravel(order="F")
 
-                    for key in frres.keys():
-                        error[key] = np.linalg.norm(frres[key].ravel(order="F") - anres[key])
+                    for key in ["rho", "v", "p"]:
+                        error[key] = np.linalg.norm(frres[key].ravel(order="F") - anres[key], normdict[norm])
                 except Exception as e:
                     import sys
                     import traceback
@@ -438,16 +444,17 @@ if __name__ == "__main__":
                         error[key] = "NAN"
 
                 quad = "".join([i[0] for i in a.config["quad"].split("-")])
-                fname += f"test-{testnum}_quad-{quad}_neles-{a.neles}_p-{a.order}_efniter-{a.config["efniter"]}"
+                fname += f"result{norm}_rhof-{frho:.2f}_momf-{fmom:.2f}_Ef-{fE:.2f}_test-{testnum}_quad-{quad}_neles-{a.neles}_p-{a.order}_efniter-{a.config["efniter"]}"
 
-                if not Path(fname+".txt").is_file():
-                    with open(f"{fname}.txt", "w") as f:
-                        f.write("frho, fmom, fE, erho, ev, ep\n")
+                # if not Path(fname+".txt").is_file():
+                #     with open(f"{fname}.txt", "w") as f:
+                #         f.write("frho, fmom, fE, erho, ev, ep\n")
 
-                if fname.startswith("NAN"):
-                    with open(f"{fname}.txt", "a") as f:
-                        f.write(f"{frho}, {fmom}, {fE}, {error["rho"]}, {error["v"]}, {error["p"]}\n")
-                else:
-                    with open(f"{fname}.txt", "a") as f:
-                        f.write(f"{frho}, {fmom}, {fE}, {error["rho"]}, {error["v"]}, {error["p"]}\n")
-                # plotres(frres, anres, fname)
+                # if fname.startswith("NAN"):
+                #     with open(f"{fname}.txt", "a") as f:
+                #         f.write(f"{frho}, {fmom}, {fE}, {error["rho"]}, {error["v"]}, {error["p"]}\n")
+                # else:
+                #     with open(f"{fname}.txt", "a") as f:
+                #         f.write(f"{frho}, {fmom}, {fE}, {error["rho"]}, {error["v"]}, {error["p"]}\n")
+                fname = fname.replace(norm, f"_rhof-{frho:.2f}_momf-{fmom:.2f}_Ef-{fE:.2f}")
+                plotres(frres, anres, fname)
