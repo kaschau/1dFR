@@ -155,7 +155,7 @@ class system:
             self.entropy_filter = noop
             self.bcent = noop
 
-    def _entropy_physical(self, u):
+    def _entropy_numerical(self, u):
         rho = u[0]
         v = u[1] / rho
         rhoE = u[2]
@@ -169,7 +169,21 @@ class system:
 
         return e
 
-    def _entropy_physical_dim(self, u):
+    def _entropy_physical(self, u):
+        rho = u[0]
+        v = u[1] / rho
+        rhoE = u[2]
+
+        gamma = self.config["gamma"]
+        p = (gamma - 1.0) * (rhoE - 0.5 * rho * v**2)
+
+        e = np.ones(p.shape)*fpdtype_max
+        idx = np.where(np.bitwise_and(rho > 0.0, p > 0.0))
+        e[idx] = p/rho**gamma
+
+        return e
+
+    def _entropy_numerical_dim(self, u):
         #cp = 1000.0
         cv = 714.2857142857143
         # R = cp - cv
@@ -183,7 +197,7 @@ class system:
 
         e = np.ones(p.shape)*fpdtype_max
         idx = np.where(np.bitwise_and(rho > 0.0, p > 0.0))
-        e[idx] = rho[idx]*(cv*np.log(p[idx]) - R*gamma*np.log(rho[idx]))
+        e[idx] = rho[idx]*(cv*(np.log(p[idx]) - gamma*np.log(rho[idx]) - np.log(R)))
 
         return e
 
@@ -286,7 +300,7 @@ class system:
         try:
             f_tol = self.config["f_tol"]
         except KeyError:
-            f_tol = 1e-6
+            f_tol = 1e-4
 
         # get min entropy for element and neighbors
         e_min = np.minimum(self.entmin_int[0:-1], self.entmin_int[1::])
@@ -323,10 +337,7 @@ class system:
 
                 i += 1
 
-            # fallback
-            if (d < d_min or p < p_min):
-                f = 0.0
-                d, p, e = self.filter_single(np.copy(umodes), unew, f)
+            d, p, e = self.filter_single(np.copy(umodes), unew, flow)
 
             # Update final solution with filtered values
             u[:,:,idx:idx+1] = unew
@@ -479,7 +490,7 @@ if __name__ == "__main__":
         "tend": 0.2,
         "outfname": "oneD",
         "efilt": True,
-        "effunc": "physical",
+        "effunc": "numerical",
         "efniter": 20,
     }
 
