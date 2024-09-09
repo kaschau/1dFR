@@ -169,6 +169,24 @@ class system:
 
         return e
 
+    def _entropy_physical_dim(self, u):
+        #cp = 1000.0
+        cv = 714.2857142857143
+        # R = cp - cv
+        R = 285.71428571428567
+        rho = u[0]
+        v = u[1] / rho
+        rhoE = u[2]
+
+        gamma = self.config["gamma"]
+        p = (gamma - 1.0) * (rhoE - 0.5 * rho * v**2)
+
+        e = np.ones(p.shape)*fpdtype_max
+        idx = np.where(np.bitwise_and(rho > 0.0, p > 0.0))
+        e[idx] = rho[idx]*(cv*np.log(p[idx]) - R*gamma*np.log(rho[idx]))
+
+        return e
+
     def _entropy_local(self, ubank):
         # assume ubank are current
         u = getattr(self, f"u{ubank}")
@@ -464,7 +482,6 @@ if __name__ == "__main__":
         "effunc": "physical",
         "efniter": 20,
     }
-
 
     neles = int(config['mesh'].split("-")[1].split(".")[0])
     half = int(neles/2)
