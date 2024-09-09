@@ -326,7 +326,7 @@ class state:
         self.gamma = gamma
 
 
-def plotres(frres, anres, fname):
+def plotres(frres, anres, fname=None):
 
     marker = "o"
     x = frres["x"]
@@ -359,7 +359,10 @@ def plotres(frres, anres, fname):
 
     plt.legend()
     plt.title = fname
-    plt.savefig(fname+".png")
+    if not fname:
+        plt.show()
+    else:
+        plt.savefig(fname+".png")
     plt.clf()
     plt.close()
 
@@ -367,15 +370,15 @@ def plotres(frres, anres, fname):
 if __name__ == "__main__":
 
     config = {
-        "p": 3,
-        "quad": "gauss-legendre",
+        "p": 2,
+        "quad": "gauss-legendre-lobatto",
         "intg": "rk3",
         "intflux": "hllc",
         "gamma": 1.4,
         "bc": "wall",
-        "mesh": "mesh-100.npy",
+        "mesh": "mesh-50.npy",
         "efilt": True,
-        "effunc": "physical",
+        "effunc": "physical_dim",
         "efniter": 20,
     }
 
@@ -385,7 +388,7 @@ if __name__ == "__main__":
     momspace = [1.0]
     Espace = [1.0]
     norm = "inf"
-
+    savefig = False
 
     test = state(testnum)
     config["dt"] = test.dt
@@ -457,4 +460,4 @@ if __name__ == "__main__":
                 #     with open(f"{fname}.txt", "a") as f:
                 #         f.write(f"{frho}, {fmom}, {fE}, {error["rho"]}, {error["v"]}, {error["p"]}\n")
                 fname = fname.replace(norm, f"_rhof-{frho:.2f}_momf-{fmom:.2f}_Ef-{fE:.2f}")
-                plotres(frres, anres, fname)
+                plotres(frres, anres, fname if savefig else None)

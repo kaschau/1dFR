@@ -124,3 +124,13 @@ class HLLC(BaseFlux):
             f[i, 0, idxRs] = fsr
 
             f[i, 0, idxR] = fr[i, 0, idxR]
+
+
+class exact(BaseFlux):
+    name = "exact"
+
+    def __init__(self, config):
+        super().__init__(config)
+
+    def intflux(self, uL, uR, f):
+        gamma = self.config["gamma"]
