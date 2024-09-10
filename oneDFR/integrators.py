@@ -9,12 +9,12 @@ class rk1(BaseIntegrator):
     def __init__(self):
         super().__init__()
 
-        self.nbanks = 1
+        self.nbanks = 2
 
     def step(self, system, dt):
 
-        system.RHS(0)
-        system.u0 += dt * system.negdivconf
+        system.RHS(0, 1)
+        system.u0 += dt * system.u1
 
         system.t += dt
         system.niter += 1
@@ -26,22 +26,20 @@ class rk3(BaseIntegrator):
     def __init__(self):
         super().__init__()
 
-        self.nbanks = 2
+        self.nbanks = 3
 
     def step(self, system, dt):
-        # store first stage (u0 already processed)
-        system.u1[:] = system.u0[:]
         # stage 1
-        system.RHS(0)
-        system.u0 += dt * system.negdivconf
+        system.RHS(0, 2)
+        system.u1 = system.u0 + dt * system.u2
 
         # stage 2
-        system.RHS(0)
-        system.u0 = 0.75 * system.u1 + 0.25 * system.u0 + 0.25 * system.negdivconf * dt
+        system.RHS(1, 2)
+        system.u1 = 0.75 * system.u0 + 0.25 * system.u1 + 0.25 * dt * system.u2
 
         # stage 3
-        system.RHS(0)
-        system.u0 = (system.u1 + 2.0 * system.u0 + 2.0 * system.negdivconf * dt) / 3.0
+        system.RHS(1, 2)
+        system.u0 = (system.u0 + 2.0 * system.u1 + 2.0 * dt * system.u2) / 3.0
 
         system.t += dt
         system.niter += 1

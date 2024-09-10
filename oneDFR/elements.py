@@ -117,8 +117,6 @@ class system:
         # allocate arrays
         # solution modes
         self.ua = np.zeros((nvar, nupts, neles))
-        # solution point fluxes
-        self.f = np.zeros((nvar, nupts, neles))
         # flux poly'l modes
         self.fa = np.zeros((nvar, nupts, neles))
         # solution @ Xi=1 (left side of interfaces)
@@ -133,8 +131,6 @@ class system:
         self.fl = np.zeros((nvar, 1, neles))
         # flux polyl @ Xi=1
         self.fr = np.zeros((nvar, 1, neles))
-        # dudt physical
-        self.negdivconf = np.zeros((nvar, nupts, neles))
 
         # create integrator
         self.intg = subclass_where(BaseIntegrator, name=config["intg"])()
@@ -263,7 +259,25 @@ class system:
 
         return rho, p, e
 
-    def filter_single(self, umt, unew, f):
+    def filter_single(self, umt, unew, f, uidx):
+        pmax = self.order + 1
+        vrho = v2rho = vmom = v2mom = vE = v2E = 1.0
+        for p in range(1, pmax):
+            v2rho *= vrho*vrho*f**self.config["efrhopow"]
+            v2mom *= vmom*vmom*f**self.config["efmompow"]
+            v2E *= vE*vE*f**self.config["efEpow"]
+            vrho *= f**self.config["efrhopow"]
+            vmom *= f**self.config["efmompow"]
+            vE *= f**self.config["efEpow"]
+            umt[0, p] *= v2rho
+            umt[1, p] *= v2mom
+            umt[2, p] *= v2E
+        # get new solution
+        self.upoly.evaluate(unew, self.uvdm[uidx:uidx+1], umt)
+
+        return self.get_minima(unew, umt)
+
+    def filter_full(self, umt, unew, f):
         pmax = self.order + 1
         vrho = v2rho = vmom = v2mom = vE = v2E = 1.0
         for p in range(1, pmax):
@@ -313,31 +327,54 @@ class system:
                                          emin < e_min - e_tol)))[0]
 
         for idx in filtidx:
+            print("***************************")
             umodes = self.ua[:,:,idx:idx+1]
             unew = np.copy(u[:,:,idx:idx+1])
 
             f = 1.0
-            flow = 0.0
-            fhigh = f
 
-            i = 0
-            while (i < self.config["efniter"]) and (fhigh - flow > f_tol):
+            for uidx in range(self.nupts):
+                ui = np.copy(unew[:,uidx:uidx+1])
 
-                # define new f
-                f = 0.5*(flow + fhigh)
-
-                d, p, e = self.filter_single(np.copy(umodes), unew, f)
+                # Do da filter with current f for this solution point
+                d, p, e = self.filter_single(np.copy(umodes), ui, f, uidx)
 
                 if (d < d_min or
                     p < p_min or
                     e < e_min[idx] - e_tol):
+
+                    # Setup root finding interval
+                    flow = 0.0
                     fhigh = f
-                else:
-                    flow = f
 
-                i += 1
+                    # Iterate on filter strength
+                    for i in range(self.config["efniter"]):
 
-            d, p, e = self.filter_single(np.copy(umodes), unew, flow)
+                        # define new f
+                        f = 0.5*(flow + fhigh)
+
+                        print(f"BEFORE {uidx} {f:.12e} {d[0]:.12e} {p[0]:.12e} {e[0]:.12e}")
+                        d, p, e = self.filter_single(np.copy(umodes), unew, f, uidx)
+                        print(f"AFTER {uidx} {f:.12e} {d[0]:.12e} {p[0]:.12e} {e[0]:.12e}")
+
+                        if (d < d_min or
+                            p < p_min or
+                            e < e_min[idx] - e_tol):
+                            fhigh = f
+                        else:
+                            flow = f
+
+                        if (fhigh - flow < f_tol):
+                            break
+
+                    f = flow
+
+            umodes = self.ua[:,:,idx:idx+1]
+            ## Filter entire solution with flow
+            print(f"final f = {f:.12e}")
+            d, p, e = self.filter_full(np.copy(umodes), unew, f)
+            print(f"new min dmin={d[0]:.12e} pmin={p[0]:.12e} emin={e[0]:.12e}")
+            print("***************************")
 
             # Update final solution with filtered values
             u[:,:,idx:idx+1] = unew
@@ -346,8 +383,8 @@ class system:
             self.upoly.compute_coeff(self.ua[:, :, idx:idx+1], unew, self.invvudm)
 
             # update min interface entropy
-            self.entmin_int[idx] = min(e[0], self.entmin_int[idx])
-            self.entmin_int[idx + 1] = min(e[0], self.entmin_int[idx + 1])
+            self.entmin_int[idx] = e[0]
+            self.entmin_int[idx + 1] = e[0]
 
     def _u_to_f_closed(self, ubank):
         u = getattr(self, f"u{ubank}")
@@ -393,47 +430,49 @@ class system:
         self.bc()
         self.bcent()
 
-    def update_flux_stuff(self, ubank):
+    def update_flux_stuff(self, ubank, fbankout):
         u = getattr(self, f"u{ubank}")
+        f = getattr(self, f"u{fbankout}")
         # compute pointwise fluxes
-        self.flux.flux(u, self.f)
+        self.flux.flux(u, f)
 
         # compute flux poly'l coeffs
-        self.upoly.compute_coeff(self.fa, self.f, self.invvudm)
+        self.upoly.compute_coeff(self.fa, f, self.invvudm)
 
         # compute common fluxes
         self.flux.intflux(self.uL, self.uR, self.fc)
 
-    def build_negdivconf(self):
+    def build_negdivconf(self, fbankout):
         # Begin building of negdivconf
+        negdivconf = getattr(self, f"u{fbankout}")
 
         # compute flux derivative at solution points
         self.dfa[:] = self.dfpoly.diff_coeff(self.fa)
-        self.dfpoly.evaluate(self.negdivconf, self.dfvdm, self.dfa)
+        self.dfpoly.evaluate(negdivconf, self.dfvdm, self.dfa)
 
         # evaluate + add the left jumps to negdivconf
         self.upoly.evaluate(self.fl, self.lvdm, self.fa)
-        self.negdivconf += np.einsum(
+        negdivconf += np.einsum(
             "vx...,x...->vx...", self.fc[:, :, 0:-1] - self.fl, self.gL
         )
 
         # eval + add the right jumps to negdivconf
         self.upoly.evaluate(self.fr, self.rvdm, self.fa)
-        self.negdivconf += np.einsum(
+        negdivconf += np.einsum(
             "vx...,x...->vx...", self.fc[:, :, 1::] - self.fr, self.gR
         )
 
         # transform to neg flux in physical coords
-        self.negdivconf *= -self.invJac
+        negdivconf *= -self.invJac
 
-    def RHS(self, ubank):
+    def RHS(self, ubankin, fbankout):
 
         # assumes ubank is up to date
-        self.update_solution_stuff(ubank)
+        self.update_solution_stuff(ubankin)
 
-        self.update_flux_stuff(ubank)
+        self.update_flux_stuff(ubankin, fbankout)
 
-        self.build_negdivconf()
+        self.build_negdivconf(fbankout)
 
     def read_grid(self):
         fname = self.config["mesh"]
