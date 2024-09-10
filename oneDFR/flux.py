@@ -29,22 +29,16 @@ class Rusanov(BaseFlux):
         fL = np.zeros(f.shape)
         fR = np.zeros(f.shape)
 
-        pL = np.zeros((f.shape[-1]))
-        pR = np.zeros((f.shape[-1]))
-
-        vL = np.zeros((f.shape[-1]))
-        vR = np.zeros((f.shape[-1]))
-
-        pL[:], vL[:] = self.flux(uL, fL)
-        pR[:], vR[:] = self.flux(uR, fR)
+        pL, vL = self.flux(uL, fL)
+        pR, vR = self.flux(uR, fR)
 
         # wavespeed
-        lam = np.maximum(
-            np.abs(uL) + np.sqrt(self.config["gamma"] * pL / uL[0]),
-            np.abs(uR) + np.sqrt(self.config["gamma"] * pR / uR[0]),
+        gamma = self.config["gamma"]
+        a = np.sqrt((0.25 * gamma) * (pL + pR) / (uL[0] + uR[0])) + 0.25 * (
+            np.abs(vL + vR)
         )
 
-        f[:] = 0.5 * (fL + fR - lam * (uR - uL))
+        f[:] = 0.5 * (fL + fR) - a * (uR - uL)
 
 
 class HLLC(BaseFlux):
