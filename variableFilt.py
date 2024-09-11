@@ -378,18 +378,20 @@ if __name__ == "__main__":
         "bc": "wall",
         "mesh": "mesh-50.npy",
         "efilt": True,
-        "effunc": "numerical",
-        "efniter": 2,
+        "effunc": "numerical_dim",
+        "efniter": 20,
     }
 
     testnum = 0
-    rhospace = momspace = Espace =  np.logspace(-0.8,0.6,5)
-    # rhospace  = [1.0]
-    # momspace = [1.0]
-    # Espace = [1.0]
-    norm = "inf"
-    savefig = False
+    rhospace = momspace = Espace =  np.logspace(-0.8,0.8,15)
     plot = False
+
+    # rhospace  = [0.15848932]
+    # momspace = [0.15848932]
+    # Espace = [1.0]
+    # plot = True
+
+    savefig = False
 
     test = state(testnum)
     config["dt"] = test.dt
@@ -398,7 +400,6 @@ if __name__ == "__main__":
     config["nout"] = 0  # round(test.t / test.dt)
 
     error = dict()
-    normdict = {"inf": np.inf, "L2": 2}
     for frho in rhospace:
         for fmom in momspace:
             for fE in Espace:
@@ -433,7 +434,9 @@ if __name__ == "__main__":
                     anres["x"] = a.x.ravel(order="F")
 
                     for key in ["rho", "v", "p"]:
-                        error[key] = np.linalg.norm(frres[key].ravel(order="F") - anres[key], normdict[norm])
+
+                        error[key] = [np.linalg.norm(frres[key].ravel(order="F") - anres[key], np.inf),
+                                      np.linalg.norm(frres[key].ravel(order="F") - anres[key], 2)]
                 except Exception as e:
                     import sys
                     import traceback
@@ -442,25 +445,18 @@ if __name__ == "__main__":
                     exc_type, exc_value, exc_traceback = sys.exc_info()
                     traceback.print_exception(exc_type, exc_value, exc_traceback)
                     print("NaN Detected")
-                    fname = "NAN-"
-                    test.t = a.t
-                    for key in ["rho", "v", "p"]:
-                        error[key] = "NAN"
+                    continue
 
                 quad = "".join([i[0] for i in a.config["quad"].split("-")])
-                fname += f"result{norm}_test-{testnum}_quad-{quad}_neles-{a.neles}_p-{a.order}_efniter-{a.config["efniter"]}"
-
-                if not Path(fname+".txt").is_file():
-                    with open(f"{fname}.txt", "w") as f:
-                        f.write("frho, fmom, fE, erho, ev, ep\n")
-
-                if fname.startswith("NAN"):
-                    with open(f"{fname}.txt", "a") as f:
-                        f.write(f"{frho}, {fmom}, {fE}, {error["rho"]}, {error["v"]}, {error["p"]}\n")
-                else:
-                    with open(f"{fname}.txt", "a") as f:
-                        f.write(f"{frho}, {fmom}, {fE}, {error["rho"]}, {error["v"]}, {error["p"]}\n")
+                fname += f"result_test-{testnum}_quad-{quad}_neles-{a.neles}_p-{a.order}_efniter-{a.config["efniter"]}-func-{a.config["effunc"]}"
 
                 if plot:
-                    fname = fname.replace(norm, f"_rhof-{frho:.2f}_momf-{fmom:.2f}_Ef-{fE:.2f}")
+                    fname = fname.replace("result", f"result_rhof-{frho:.2f}_momf-{fmom:.2f}_Ef-{fE:.2f}")
                     plotres(frres, anres, fname if savefig else None)
+                else:
+                    if not Path(fname+".txt").is_file():
+                        with open(f"{fname}.txt", "w") as f:
+                            f.write("frho, fmom, fE, erho_inf, ev_inf, ep_inf, erho_2, ev_2, ep_2\n")
+
+                    with open(f"{fname}.txt", "a") as f:
+                        f.write(f"{frho}, {fmom}, {fE}, {error["rho"][0]}, {error["v"][0]}, {error["p"][0]}, {error["rho"][1]}, {error["v"][1]}, {error["p"][1]}\n")
