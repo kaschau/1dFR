@@ -140,13 +140,15 @@ class system:
         # see if we are filtering
         self.efilt = self.config["efilt"]
         if self.efilt and self.order > 0:
-            self.entmin_int = np.zeros(neles + 1)
+            self.entmin_int = np.zeros((2, neles))
             self.entropy = getattr(self, f"_entropy_{config["effunc"]}")
+            self.intcent = self._intcent
             self.entropy_local = self._entropy_local
             self.entropy_filter = self._entropy_filter
             self.bcent = self._bcent
         else:
             self.entropy = noop
+            self.intcent = noop
             self.entropy_local = noop
             self.entropy_filter = noop
             self.bcent = noop
@@ -202,19 +204,17 @@ class system:
         u = getattr(self, f"u{ubank}")
 
         #compute element entropy
-        sele = np.min(self.entropy(u), axis=0)
-
-        #compute min for elements with right neighbors
-        self.entmin_int[0:-1] = sele
-
-        #compute min for elements with left neighbors
-        self.entmin_int[1::] = np.minimum(sele, self.entmin_int[0:-1])
+        self.entmin_int[:] = np.min(self.entropy(u), axis=0)[np.newaxis, :]
 
         #compute interface entropy
         if not self.fpts_in_upts:
             self.u_to_f()
-            self.entmin_int = np.minimum(np.min(self.entropy(self.uL), axis=0), self.entmin_int)
-            self.entmin_int = np.minimum(np.min(self.entropy(self.uR), axis=0), self.entmin_int)
+            self.entmin_int = np.minimum(np.min(self.entropy(self.uL), axis=0), self.entmin_int)[np.newaxis, :]
+            self.entmin_int = np.minimum(np.min(self.entropy(self.uR), axis=0), self.entmin_int)[np.newaxis, :]
+
+    def _intcent(self):
+        self.entmin_int[0, 1:-1] = np.minimum(self.entmin_int[0, 1:-1], self.entmin_int[1, 0:-2])
+        self.entmin_int[1, 0:-2] = np.minimum(self.entmin_int[1, 0:-2], self.entmin_int[0, 1:-1])
 
     def get_minima(self, u, modes):
         rho = u[0]
@@ -317,14 +317,14 @@ class system:
             f_tol = 1e-4
 
         # get min entropy for element and neighbors
-        e_min = np.minimum(self.entmin_int[0:-1], self.entmin_int[1::])
+        entmin = np.min(self.entmin_int, axis=0)
 
         # compute rho, p, e for all elements
         dmin, pmin, emin = self.get_minima(u, self.ua)
 
         filtidx = np.where(np.bitwise_or(dmin < d_min,
                                          np.bitwise_or(pmin < p_min,
-                                         emin < e_min - e_tol)))[0]
+                                         emin < entmin - e_tol)))[0]
 
         for idx in filtidx:
             print("***************************")
@@ -341,7 +341,7 @@ class system:
 
                 if (d < d_min or
                     p < p_min or
-                    e < e_min[idx] - e_tol):
+                    e < entmin[idx] - e_tol):
 
                     # Setup root finding interval
                     flow = 0.0
@@ -359,7 +359,7 @@ class system:
 
                         if (d < d_min or
                             p < p_min or
-                            e < e_min[idx] - e_tol):
+                            e < entmin[idx] - e_tol):
                             fhigh = f
                         else:
                             flow = f
@@ -368,12 +368,13 @@ class system:
                             break
 
                     f = flow
+                    print(f" final f = {f:.12e}")
 
             umodes = self.ua[:,:,idx:idx+1]
             ## Filter entire solution with flow
-            print(f"final f = {f:.12e}")
-            d, p, e = self.filter_full(np.copy(umodes), unew, f)
-            print(f"new min dmin={d[0]:.12e} pmin={p[0]:.12e} emin={e[0]:.12e}")
+            dmin, pmin, e_min = self.filter_full(np.copy(umodes), unew, f)
+            emin[idx] = e_min[0]
+            print(f"new min dmin={dmin[0]:.12e} pmin={pmin[0]:.12e} emin={e_min[0]:.12e}")
             print("***************************")
 
             # Update final solution with filtered values
@@ -382,9 +383,8 @@ class system:
             # update modes
             self.upoly.compute_coeff(self.ua[:, :, idx:idx+1], unew, self.invvudm)
 
-            # update min interface entropy
-            self.entmin_int[idx] = e[0]
-            self.entmin_int[idx + 1] = e[0]
+        # update min interface entropy
+        self.entmin_int[:] = emin[np.newaxis, :]
 
     def _u_to_f_closed(self, ubank):
         u = getattr(self, f"u{ubank}")
@@ -408,11 +408,11 @@ class system:
     def _bcent(self):
         uL = self.uL[:,:,0]
         eL = self.entropy(uL)
-        self.entmin_int[0] = min(eL[0], self.entmin_int[0])
+        self.entmin_int[0, 0] = min(eL[0], self.entmin_int[0, 0])
 
         uR = self.uR[:,:,-1]
         eR = self.entropy(uR)
-        self.entmin_int[-1] = min(eR[0], self.entmin_int[-1])
+        self.entmin_int[-1, -1] = min(eR[0], self.entmin_int[-1, -1])
 
     def update_solution_stuff(self, ubank):
         u = getattr(self, f"u{ubank}")
@@ -420,15 +420,15 @@ class system:
         self.upoly.compute_coeff(self.ua, u, self.invvudm)
 
         self.entropy_filter(ubank)
-        # update local entropy
-        self.entropy_local(ubank)
+
+        self.intcent()
+        # compute bcs
+        self.bc()
+        self.bcent()
 
         # interpolate solution to face
         self.u_to_f(ubank)
 
-        # compute bcs
-        self.bc()
-        self.bcent()
 
     def update_flux_stuff(self, ubank, fbankout):
         u = getattr(self, f"u{ubank}")
@@ -497,13 +497,15 @@ class system:
             self.config["gamma"] - 1.0
         )
 
+        # prepare for first iteration
         self.upoly.compute_coeff(self.ua, u, self.invvudm)
         self.u_to_f(0)
         self.bc()
 
         self.entropy_local(0)
         self.bcent()
-        self.update_solution_stuff(0)
+        self.entropy_filter(0)
+        # self.update_solution_stuff(0)
 
     def run(self):
         while round(self.t, 5) <= self.config["tend"]:

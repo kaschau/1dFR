@@ -39,7 +39,12 @@ class rk3(BaseIntegrator):
 
         # stage 3
         system.RHS(1, 2)
-        system.u0 = (system.u0 + 2.0 * system.u1 + 2.0 * dt * system.u2) / 3.0
+        system.u0 = (
+            1.0 / 3.0 * system.u0 + 2.0 / 3.0 * system.u1 + 2.0 / 3.0 * dt * system.u2
+        )
 
+        # Post Process final stage solution
+        system.upoly.compute_coeff(system.ua, system.u0, system.invvudm)
+        system.entropy_filter(0)
         system.t += dt
         system.niter += 1
