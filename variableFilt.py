@@ -378,8 +378,8 @@ if __name__ == "__main__":
         "bc": "wall",
         "mesh": "mesh-50.npy",
         "efilt": True,
-        "effunc": "physical_dim",
-        "efniter": 20,
+        "effunc": "numerical",
+        "efniter": 2,
     }
 
     testnum = 0
@@ -420,7 +420,7 @@ if __name__ == "__main__":
                 try:
                     a.run()
                     fname = ""
-                    # Flux Reconstruction resultk
+                    # Flux Reconstruction results
                     frres = dict()
                     frres["x"] = x
                     frres["rho"] = a.u0[0]
