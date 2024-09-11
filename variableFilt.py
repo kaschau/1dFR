@@ -383,12 +383,13 @@ if __name__ == "__main__":
     }
 
     testnum = 0
-    # rhospace = momspace = Espace =  np.logspace(-0.8,0.6,12)
-    rhospace  = [1.0]
-    momspace = [1.0]
-    Espace = [1.0]
+    rhospace = momspace = Espace =  np.logspace(-0.8,0.6,5)
+    # rhospace  = [1.0]
+    # momspace = [1.0]
+    # Espace = [1.0]
     norm = "inf"
     savefig = False
+    plot = False
 
     test = state(testnum)
     config["dt"] = test.dt
@@ -447,17 +448,19 @@ if __name__ == "__main__":
                         error[key] = "NAN"
 
                 quad = "".join([i[0] for i in a.config["quad"].split("-")])
-                fname += f"result{norm}_rhof-{frho:.2f}_momf-{fmom:.2f}_Ef-{fE:.2f}_test-{testnum}_quad-{quad}_neles-{a.neles}_p-{a.order}_efniter-{a.config["efniter"]}"
+                fname += f"result{norm}_test-{testnum}_quad-{quad}_neles-{a.neles}_p-{a.order}_efniter-{a.config["efniter"]}"
 
-                # if not Path(fname+".txt").is_file():
-                #     with open(f"{fname}.txt", "w") as f:
-                #         f.write("frho, fmom, fE, erho, ev, ep\n")
+                if not Path(fname+".txt").is_file():
+                    with open(f"{fname}.txt", "w") as f:
+                        f.write("frho, fmom, fE, erho, ev, ep\n")
 
-                # if fname.startswith("NAN"):
-                #     with open(f"{fname}.txt", "a") as f:
-                #         f.write(f"{frho}, {fmom}, {fE}, {error["rho"]}, {error["v"]}, {error["p"]}\n")
-                # else:
-                #     with open(f"{fname}.txt", "a") as f:
-                #         f.write(f"{frho}, {fmom}, {fE}, {error["rho"]}, {error["v"]}, {error["p"]}\n")
-                fname = fname.replace(norm, f"_rhof-{frho:.2f}_momf-{fmom:.2f}_Ef-{fE:.2f}")
-                plotres(frres, anres, fname if savefig else None)
+                if fname.startswith("NAN"):
+                    with open(f"{fname}.txt", "a") as f:
+                        f.write(f"{frho}, {fmom}, {fE}, {error["rho"]}, {error["v"]}, {error["p"]}\n")
+                else:
+                    with open(f"{fname}.txt", "a") as f:
+                        f.write(f"{frho}, {fmom}, {fE}, {error["rho"]}, {error["v"]}, {error["p"]}\n")
+
+                if plot:
+                    fname = fname.replace(norm, f"_rhof-{frho:.2f}_momf-{fmom:.2f}_Ef-{fE:.2f}")
+                    plotres(frres, anres, fname if savefig else None)
