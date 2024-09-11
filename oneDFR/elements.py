@@ -327,7 +327,6 @@ class system:
                                          emin < entmin - e_tol)))[0]
 
         for idx in filtidx:
-            print("***************************")
             umodes = self.ua[:,:,idx:idx+1]
             unew = np.copy(u[:,:,idx:idx+1])
 
@@ -353,9 +352,7 @@ class system:
                         # define new f
                         f = 0.5*(flow + fhigh)
 
-                        print(f"BEFORE {uidx} {f:.12e} {d[0]:.12e} {p[0]:.12e} {e[0]:.12e}")
                         d, p, e = self.filter_single(np.copy(umodes), unew, f, uidx)
-                        print(f"AFTER {uidx} {f:.12e} {d[0]:.12e} {p[0]:.12e} {e[0]:.12e}")
 
                         if (d < d_min or
                             p < p_min or
@@ -368,14 +365,11 @@ class system:
                             break
 
                     f = flow
-                    print(f" final f = {f:.12e}")
 
             umodes = self.ua[:,:,idx:idx+1]
             ## Filter entire solution with flow
             dmin, pmin, e_min = self.filter_full(np.copy(umodes), unew, f)
             emin[idx] = e_min[0]
-            print(f"new min dmin={dmin[0]:.12e} pmin={pmin[0]:.12e} emin={e_min[0]:.12e}")
-            print("***************************")
 
             # Update final solution with filtered values
             u[:,:,idx:idx+1] = unew
