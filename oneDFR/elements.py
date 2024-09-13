@@ -1,10 +1,10 @@
 import numpy as np
-from .poly import LegendrePoly
-from .integrators import BaseIntegrator
-from .flux import BaseFlux
-from .util import subclass_where
+from oneDFR.poly import LegendrePoly
+from oneDFR.integrators import BaseIntegrator
+from oneDFR.flux import BaseFlux
+from oneDFR.util import subclass_where
 from pathlib import Path
-from .output import plot
+from oneDFR.output import plot
 
 # np.seterr(all="raise")
 fpdtype_max = np.finfo(np.float64).max
@@ -85,7 +85,7 @@ class system:
 
         # create solution point inverse/vandermonde matrix
         self.uvdm = self.upoly.vandermonde(self.upts)
-        self.invvudm = np.linalg.inv(self.uvdm)
+        self.invuvdm = np.linalg.inv(self.uvdm)
 
         # left and right solution vandermonde
         self.lvdm = self.upoly.vandermonde([-1])
@@ -140,6 +140,19 @@ class system:
         # see if we are filtering
         self.efilt = self.config["efilt"]
         if self.efilt and self.order > 0:
+
+            # create the ef_pts
+            if self.fpts_in_upts:
+                self.efpts = self.upts
+                self.nefpts = len(self.efpts)
+                self.efvdm = self.uvdm
+                self.invefvdm = self.invuvdm
+            else:
+                self.efpts = np.concatenate((self.upts, [-1, 1]))
+                self.nefpts = len(self.efpts)
+                fdm = self.upoly.vandermonde([-1,1])
+                self.efvdm = np.vstack((self.uvdm, fdm))
+
             self.entmin_int = np.zeros((2, neles))
             self.entropy = getattr(self, f"_entropy_{config["effunc"]}")
             self.intcent = self._intcent
@@ -209,8 +222,8 @@ class system:
         #compute interface entropy
         if not self.fpts_in_upts:
             self.u_to_f()
-            self.entmin_int = np.minimum(np.min(self.entropy(self.uL), axis=0), self.entmin_int)[np.newaxis, :]
-            self.entmin_int = np.minimum(np.min(self.entropy(self.uR), axis=0), self.entmin_int)[np.newaxis, :]
+            self.entmin_int[:] = np.minimum(np.min(self.entropy(self.uL[:, :, 1::]), axis=0), self.entmin_int)
+            self.entmin_int[:] = np.minimum(np.min(self.entropy(self.uR[:, :, 0:-1]), axis=0), self.entmin_int)
 
     def _intcent(self):
         self.entmin_int[0, 1:-1] = np.minimum(self.entmin_int[0, 1:-1], self.entmin_int[1, 0:-2])
@@ -259,7 +272,7 @@ class system:
 
         return rho, p, e
 
-    def filter_single(self, umt, unew, f, uidx):
+    def filter_single(self, umt, ui, f, uidx):
         pmax = self.order + 1
         vrho = v2rho = vmom = v2mom = vE = v2E = 1.0
         for p in range(1, pmax):
@@ -273,9 +286,18 @@ class system:
             umt[1, p] *= v2mom
             umt[2, p] *= v2E
         # get new solution
-        self.upoly.evaluate(unew, self.uvdm[uidx:uidx+1], umt)
+        self.upoly.evaluate(ui, self.efvdm[uidx:uidx+1], umt)
 
-        return self.get_minima(unew, umt)
+        rho = ui[0]
+        v = ui[1] / rho
+        rhoE = ui[2]
+
+        gamma = self.config["gamma"]
+        p = (gamma - 1.0) * (rhoE - 0.5 * rho * v**2)
+
+        e = self.entropy(ui)
+
+        return rho[0], p[0], e[0]
 
     def filter_full(self, umt, unew, f):
         pmax = self.order + 1
@@ -332,8 +354,12 @@ class system:
 
             f = 1.0
 
-            for uidx in range(self.nupts):
-                ui = np.copy(unew[:,uidx:uidx+1])
+            for uidx in range(self.nefpts):
+                if uidx < self.nupts:
+                    ui = np.copy(unew[:,uidx:uidx+1])
+                else:
+                    ui = np.zeros((self.nvar, 1, 1))
+                    self.upoly.evaluate(ui, self.efvdm[uidx:uidx+1], umodes)
 
                 # Do da filter with current f for this solution point
                 d, p, e = self.filter_single(np.copy(umodes), ui, f, uidx)
@@ -375,7 +401,7 @@ class system:
             u[:,:,idx:idx+1] = unew
 
             # update modes
-            self.upoly.compute_coeff(self.ua[:, :, idx:idx+1], unew, self.invvudm)
+            self.upoly.compute_coeff(self.ua[:, :, idx:idx+1], unew, self.invuvdm)
 
         # update min interface entropy
         self.entmin_int[:] = emin[np.newaxis, :]
@@ -411,17 +437,18 @@ class system:
     def update_solution_stuff(self, ubank):
         u = getattr(self, f"u{ubank}")
         # create solution poly'l
-        self.upoly.compute_coeff(self.ua, u, self.invvudm)
+        self.upoly.compute_coeff(self.ua, u, self.invuvdm)
 
         self.entropy_filter(ubank)
+
+        # interpolate solution to face
+        self.u_to_f(ubank)
 
         self.intcent()
         # compute bcs
         self.bc()
         self.bcent()
 
-        # interpolate solution to face
-        self.u_to_f(ubank)
 
 
     def update_flux_stuff(self, ubank, fbankout):
@@ -431,7 +458,7 @@ class system:
         self.flux.flux(u, f)
 
         # compute flux poly'l coeffs
-        self.upoly.compute_coeff(self.fa, f, self.invvudm)
+        self.upoly.compute_coeff(self.fa, f, self.invuvdm)
 
         # compute common fluxes
         self.flux.intflux(self.uL, self.uR, self.fc)
@@ -492,7 +519,7 @@ class system:
         )
 
         # prepare for first iteration
-        self.upoly.compute_coeff(self.ua, u, self.invvudm)
+        self.upoly.compute_coeff(self.ua, u, self.invuvdm)
         self.u_to_f(0)
         self.bc()
 
@@ -516,11 +543,11 @@ if __name__ == "__main__":
         "p": 3,
         "quad": "gauss-legendre",
         "intg": "rk3",
-        "intflux": "hllc",
+        "intflux": "rusanov",
         "gamma": 1.4,
         "nout": round(0.01/1e-4),
         "bc": "wall",
-        "mesh": "mesh-100.npy",
+        "mesh": "mesh-50.npy",
         "dt": 1e-4,
         "tend": 0.2,
         "outfname": "oneD",
@@ -545,3 +572,4 @@ if __name__ == "__main__":
     a = system(config)
     a.set_ics([rho,v,p])
     a.run()
+    plot(a)

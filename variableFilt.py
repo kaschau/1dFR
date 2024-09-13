@@ -366,6 +366,26 @@ def plotres(frres, anres, fname=None):
     plt.clf()
     plt.close()
 
+def compute_score(frres, anres):
+
+    score = 0.0
+    for key in [i for i in frres.keys() if i != 'x']:
+        vfr = frres[key].ravel("F")
+        van = anres[key]
+
+        tol = np.maximum(1e-8, 0.01*van[1:-1])
+
+        extremax = np.bitwise_and(vfr[1:-1] > vfr[0:-2] + tol, vfr[1:-1] > vfr[2::] + tol)
+        extremin = np.bitwise_and(vfr[1:-1] < vfr[0:-2] - tol, vfr[1:-1] < vfr[2::] - tol)
+
+        idx = np.bitwise_or(extremax, extremin)
+
+        score += np.linalg.norm(vfr[1:-1][idx] - van[1:-1][idx])
+
+        score += np.linalg.norm(vfr - van)
+
+    return score
+
 
 if __name__ == "__main__":
 
@@ -373,23 +393,23 @@ if __name__ == "__main__":
         "p": 2,
         "quad": "gauss-legendre-lobatto",
         "intg": "rk3",
-        "intflux": "hllc",
+        "intflux": "rusanov",
         "gamma": 1.4,
         "bc": "wall",
         "mesh": "mesh-50.npy",
         "efilt": True,
-        "effunc": "numerical_dim",
-        "efniter": 20,
+        "effunc": "numerical",
+        "efniter": 2,
     }
 
     testnum = 0
-    rhospace = momspace = Espace =  np.logspace(-0.8,0.8,15)
+    rhospace = momspace = Espace =  np.logspace(-2,0.15,5)
     plot = False
 
-    # rhospace  = [0.15848932]
-    # momspace = [0.15848932]
-    # Espace = [1.0]
-    # plot = True
+    rhospace  = [1.0]
+    momspace = [1.0]
+    Espace = [1.0]
+    plot = True
 
     savefig = False
 
@@ -421,22 +441,6 @@ if __name__ == "__main__":
                 a.set_ics([rho, v, p])
                 try:
                     a.run()
-                    fname = ""
-                    # Flux Reconstruction results
-                    frres = dict()
-                    frres["x"] = x
-                    frres["rho"] = a.u0[0]
-                    frres["v"] = a.u0[1] / frres["rho"]
-                    frres["p"] = (config["gamma"] - 1.0) * (a.u0[2] - 0.5 * frres["rho"] * frres["v"] ** 2)
-
-                    # Analyrical Results
-                    anres = solve(test, np.ravel(x, order="F"))
-                    anres["x"] = a.x.ravel(order="F")
-
-                    for key in ["rho", "v", "p"]:
-
-                        error[key] = [np.linalg.norm(frres[key].ravel(order="F") - anres[key], np.inf),
-                                      np.linalg.norm(frres[key].ravel(order="F") - anres[key], 2)]
                 except Exception as e:
                     import sys
                     import traceback
@@ -447,8 +451,25 @@ if __name__ == "__main__":
                     print("NaN Detected")
                     continue
 
+                # Flux Reconstruction results
+                frres = dict()
+                frres["x"] = x
+                frres["rho"] = a.u0[0]
+                frres["v"] = a.u0[1] / frres["rho"]
+                frres["p"] = (config["gamma"] - 1.0) * (a.u0[2] - 0.5 * frres["rho"] * frres["v"] ** 2)
+
+                # Analyrical Results
+                anres = solve(test, np.ravel(x, order="F"))
+                anres["x"] = a.x.ravel(order="F")
+
+                for key in ["rho", "v", "p"]:
+                    error[key] = [np.linalg.norm(frres[key].ravel(order="F") - anres[key], np.inf),
+                                  np.linalg.norm(frres[key].ravel(order="F") - anres[key], 2)]
+
+                score = compute_score(frres, anres)
+
                 quad = "".join([i[0] for i in a.config["quad"].split("-")])
-                fname += f"result_test-{testnum}_quad-{quad}_neles-{a.neles}_p-{a.order}_efniter-{a.config["efniter"]}-func-{a.config["effunc"]}"
+                fname = f"result_test-{testnum}_quad-{quad}_neles-{a.neles}_p-{a.order}_efniter-{a.config["efniter"]}-func-{a.config["effunc"]}"
 
                 if plot:
                     fname = fname.replace("result", f"result_rhof-{frho:.2f}_momf-{fmom:.2f}_Ef-{fE:.2f}")
@@ -456,7 +477,7 @@ if __name__ == "__main__":
                 else:
                     if not Path(fname+".txt").is_file():
                         with open(f"{fname}.txt", "w") as f:
-                            f.write("frho, fmom, fE, erho_inf, ev_inf, ep_inf, erho_2, ev_2, ep_2\n")
+                            f.write("frho, fmom, fE, erho_inf, ev_inf, ep_inf, erho_2, ev_2, ep_2, score\n")
 
                     with open(f"{fname}.txt", "a") as f:
-                        f.write(f"{frho}, {fmom}, {fE}, {error["rho"][0]}, {error["v"][0]}, {error["p"][0]}, {error["rho"][1]}, {error["v"][1]}, {error["p"][1]}\n")
+                        f.write(f"{frho}, {fmom}, {fE}, {error["rho"][0]}, {error["v"][0]}, {error["p"][0]}, {error["rho"][1]}, {error["v"][1]}, {error["p"][1]}, {score}\n")

@@ -22,7 +22,6 @@ class BasePoly:
         return dL(a, axis=1)
 
 
-
 class LegendrePoly(BasePoly):
     def __init__(self, deg):
         self.deg = deg
