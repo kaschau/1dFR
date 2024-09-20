@@ -14,12 +14,13 @@ Springer
 
 for more.
 """
+import sys
 import numpy as np
 from oneDFR.elements import system
 import matplotlib.pyplot as plt
 from pathlib import Path
 
-np.seterr(all="raise")
+np.seterr(invalid="raise")
 
 def guessP(test):
     pL, rhoL, uL = test.pL, test.rhoL, test.uL
@@ -391,27 +392,55 @@ if __name__ == "__main__":
 
     config = {
         "p": 2,
-        "quad": "gauss-legendre-lobatto",
+        # "quad": "gauss-legendre",
         "intg": "rk3",
-        "intflux": "rusanov",
+        "intflux": "hllc",
         "gamma": 1.4,
         "bc": "wall",
         "mesh": "mesh-50.npy",
         "efilt": True,
-        "effunc": "numerical",
-        "efniter": 2,
+        # "effunc": "numerical",
+        "efniter": 20,
     }
 
-    testnum = 0
-    rhospace = momspace = Espace =  np.logspace(-2,0.15,5)
+    try:
+        testnum = int(sys.argv[1])
+    except IndexError:
+        testnum = 1
+
+    try:
+        config["effunc"] = sys.argv[2]
+    except IndexError:
+        pass
+
+    try:
+        if sys.argv[3] == "gll":
+            config["quad"] = "gauss-legendre-lobatto"
+        else:
+            config["quad"] = "gauss-legendre"
+    except IndexError:
+        pass
+
+    rhospace = momspace = Espace = np.logspace(-2.,2.,10)
     plot = False
 
-    rhospace  = [1.0]
-    momspace = [1.0]
-    Espace = [1.0]
-    plot = True
+    # rhospace  = [1.0]
+    # momspace = [1.0]
+    # Espace = [1.0]
+    # best numerical_dim gll
+    temp = {
+        0: [[0.01], [0.01], [0.0774263682681127]] ,
+        1: [[1.6681005372000592], [0.5994842503189409], [0.01]] ,
+        2: [[4.6415888336127775], [0.21544346900318834], [0.01]] ,
+        3: [[0.027825594022071243], [0.027825594022071243], [0.01]] ,
+        4: [[0.5994842503189409], [0.01], [4.6415888336127775]] ,
+        5: [[0.027825594022071243], [0.5994842503189409], [0.01]]
+    }
 
-    savefig = False
+    rhospace, momspace, Espace = temp[testnum]
+
+    plot = True
+    savefig = True
 
     test = state(testnum)
     config["dt"] = test.dt
