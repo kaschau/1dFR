@@ -6,7 +6,7 @@ from oneDFR.util import subclass_where
 from pathlib import Path
 from oneDFR.output import plot
 
-# np.seterr(all="raise")
+np.seterr(all="raise")
 fpdtype_max = np.finfo(np.float64).max
 fpdtype_min = np.finfo(np.float64).eps
 
@@ -139,7 +139,7 @@ class system:
 
         # see if we are filtering
         self.efilt = self.config["efilt"]
-        if self.efilt and self.order > 0:
+        if self.efilt is not None and self.order > 0:
 
             # create the ef_pts
             if self.fpts_in_upts:
@@ -157,7 +157,14 @@ class system:
             self.entropy = getattr(self, f"_entropy_{config["effunc"]}")
             self.intcent = self._intcent
             self.entropy_local = self._entropy_local
-            self.entropy_filter = self._entropy_filter
+            if self.efilt == "bisect":
+                self.entropy_filter = self._entropy_filter_bisect
+                self.get_minima = self._get_minima_bisect
+            elif self.efilt == "linearise":
+                self.entropy_filter = self._entropy_filter_linearise
+                self.get_minima = self._get_minima_linearise
+            else:
+                raise ValueError("What entropy filter?")
             self.bcent = self._bcent
         else:
             self.entropy = noop
@@ -229,7 +236,7 @@ class system:
         self.entmin_int[0, 1:-1] = np.minimum(self.entmin_int[0, 1:-1], self.entmin_int[1, 0:-2])
         self.entmin_int[1, 0:-2] = np.minimum(self.entmin_int[1, 0:-2], self.entmin_int[0, 1:-1])
 
-    def get_minima(self, u, modes):
+    def _get_minima_bisect(self, u, modes):
         rho = u[0]
         v = u[1] / rho
         rhoE = u[2]
@@ -271,6 +278,44 @@ class system:
             e = np.minimum(e, np.min(eR, axis=0))
 
         return rho, p, e
+
+    def _get_minima_linearise(self, u, modes):
+        rho = u[0]
+        v = u[1] / rho
+        rhoe = u[2] - 0.5*rho*v**2
+
+        e = self.entropy(u)
+
+        rho = np.min(rho, axis=0)
+        rhoe = np.min(rhoe, axis=0)
+        e = np.min(e, axis=0)
+
+        if not self.fpts_in_upts:
+            #interpolate to faces
+            uL = np.zeros((self.nvar, 1, u.shape[-1]))
+            self.upoly.evaluate(uL, self.rvdm, modes)
+            uR = np.zeros((self.nvar, 1, u.shape[-1]))
+            self.upoly.evaluate(uR, self.lvdm, modes)
+
+            rhoL = uL[0]
+            vL = uL[1] / rhoL
+            rhoeL = uL[2] - 0.5*rhoL*vL**2
+            eL = self.entropy(uL)
+
+            rho = np.minimum(rho, np.min(rhoL, axis=0))
+            rhoe = np.minimum(rhoe, np.min(rhoeL, axis=0))
+            e = np.minimum(e, np.min(eL, axis=0))
+
+            rhoR = uR[0]
+            vR = uR[1] / rhoR
+            rhoeR = uR[2] - 0.5*rhoR*vR**2
+            eR = self.entropy(uR)
+
+            rho = np.minimum(rho, np.min(rhoR, axis=0))
+            rhoe = np.minimum(rhoe, np.min(rhoeR, axis=0))
+            e = np.minimum(e, np.min(eR, axis=0))
+
+        return rho, rhoe, e
 
     def filter_single(self, umt, ui, f, uidx):
         pmax = self.order + 1
@@ -317,7 +362,7 @@ class system:
 
         return self.get_minima(unew, umt)
 
-    def _entropy_filter(self, ubank):
+    def _entropy_filter_bisect(self, ubank):
         # assumes entmin_int is already populated
         u = getattr(self, f"u{ubank}")
 
@@ -406,6 +451,82 @@ class system:
         # update min interface entropy
         self.entmin_int[:] = emin[np.newaxis, :]
 
+    def _entropy_filter_linearise(self, ubank):
+        # assumes entmin_int is already populated
+        u = getattr(self, f"u{ubank}")
+
+        try:
+            d_min = self.config["d_min"]
+        except KeyError:
+            d_min = 1e-6
+        try:
+            rhoe_min = self.config["rhoe_min"]
+        except KeyError:
+            rhoe_min = 1e-6
+        try:
+            e_tol = self.config["e_etol"]
+        except KeyError:
+            e_tol = 1e-6
+
+        # get min entropy for element and neighbors
+        entmin = np.min(self.entmin_int, axis=0)
+
+        # compute rho, p, e for all elements
+        dmin, rhoemin, emin = self.get_minima(u, self.ua)
+
+        filtidx = np.where(np.bitwise_or(dmin < d_min,
+                                         np.bitwise_or(rhoemin < rhoe_min,
+                                         emin - entmin < -e_tol)))[0]
+
+        for idx in filtidx:
+            umodes = self.ua[:,:,idx:idx+1]
+
+            if self.fpts_in_upts:
+                ui = np.copy(u[:,:,idx:idx+1])
+            else:
+                ui = np.zeros((self.nvar, self.nefpts, 1))
+                self.upoly.evaluate(ui, self.efvdm, umodes)
+
+            # First test for negative density
+            dmin = np.min(ui[0,:,0])
+            if dmin < d_min:
+                theta = (umodes[0,0,0] - d_min)/(umodes[0,0,0] - dmin)
+                theta = min(1.0, max(theta, 0.0))
+                ui[0,:,0] = umodes[0,0,0] + theta*(ui[0,:,0]-umodes[0,0,0])
+                self.upoly.compute_coeff(umodes, ui[:,0:self.nupts], self.invuvdm)
+                # assert(np.min(ui[0,:,0]) >= d_min)
+
+            # Now test for negative internal energy
+            rhoemin = np.min(ui[2,:,0] - 0.5*ui[1,:,0]**2/ui[0,:,0])
+            if rhoemin < rhoe_min:
+                theta = (umodes[2,0,0] - d_min)/(umodes[2,0,0] - dmin)
+                theta = min(1.0, max(theta, 0.0))
+                ui[:,:,0] = umodes[:,0,0][:, np.newaxis] + theta*(ui[:,:,0]-umodes[:,0,0][:, np.newaxis])
+                self.upoly.compute_coeff(umodes, ui[:,0:self.nupts], self.invuvdm)
+                # assert (np.min(ui[2,:,0] - 0.5*ui[1,:,0]**2/ui[0,:,0]) >= rhoe_min)
+
+            # Finally, test for entropy
+            ei = self.entropy(ui)
+            emin = np.min(ei)
+            if emin - entmin[idx] < -e_tol:
+                Xavg = self.entropy(umodes[:,0,:]) - entmin[idx]
+                theta = Xavg / (Xavg - np.min(ei - entmin[idx]))
+                theta = min(1.0, max(theta, 0.0))
+                ui[:,:,0] = umodes[:,0,0][:, np.newaxis] + theta*(ui[:,:,0]-umodes[:,0,0][:, np.newaxis])
+                self.upoly.compute_coeff(umodes, ui[:,0:self.nupts], self.invuvdm)
+                emin = np.min(self.entropy(ui))
+                test = emin - entmin[idx]
+                # assert(test >= -e_tol)
+
+            # Update solution
+            u[:,:,idx:idx+1] = ui[:,0:self.nupts,:]
+
+            # update modes
+            self.ua[:,:,idx:idx+1] = umodes
+
+            # update min interface entropy
+            self.entmin_int[:, idx:idx+1] = emin
+
     def _u_to_f_closed(self, ubank):
         u = getattr(self, f"u{ubank}")
         # REMEMBER, RIGHT interface is LEFT side of element
@@ -448,8 +569,6 @@ class system:
         # compute bcs
         self.bc()
         self.bcent()
-
-
 
     def update_flux_stuff(self, ubank, fbankout):
         u = getattr(self, f"u{ubank}")
@@ -526,7 +645,6 @@ class system:
         self.entropy_local(0)
         self.bcent()
         self.entropy_filter(0)
-        # self.update_solution_stuff(0)
 
     def run(self):
         while round(self.t, 5) <= self.config["tend"]:
@@ -541,17 +659,17 @@ class system:
 if __name__ == "__main__":
     config = {
         "p": 3,
-        "quad": "gauss-legendre",
+        "quad": "gauss-legendre-lobatto",
         "intg": "rk3",
-        "intflux": "rusanov",
+        "intflux": "hllc",
         "gamma": 1.4,
-        "nout": round(0.01/1e-4),
+        "nout": 0,
         "bc": "wall",
         "mesh": "mesh-50.npy",
         "dt": 1e-4,
         "tend": 0.2,
         "outfname": "oneD",
-        "efilt": True,
+        "efilt": "linearise",
         "effunc": "numerical",
         "efniter": 20,
     }

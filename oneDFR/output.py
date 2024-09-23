@@ -44,9 +44,14 @@ def plot(system, fname=None):
             c="r",
         )
     plt.legend(loc="upper right")
-    plt.ylim([-0.2, 1.2])
+    # plt.ylim([-0.2, 1.2])
     quad = "".join([i[0] for i in system.config["quad"].split("-")])
-    plt.title(f"rule = {quad}, neles = {system.neles}, $p={system.order}$, efniter={system.config["efniter"]}")
+    title = f"rule = {quad}, neles = {system.neles}, $p={system.order}$"
+    if system.efilt == "bisect":
+        title += f", efniter={system.config["efniter"]}"
+    else:
+        title += ", linearised"
+    plt.title(title)
     if fname:
         plt.savefig(fname)
         plt.clf()

@@ -392,14 +392,11 @@ if __name__ == "__main__":
 
     config = {
         "p": 2,
-        # "quad": "gauss-legendre",
         "intg": "rk3",
         "intflux": "hllc",
         "gamma": 1.4,
         "bc": "wall",
         "mesh": "mesh-50.npy",
-        "efilt": True,
-        # "effunc": "numerical",
         "efniter": 20,
     }
 
@@ -421,23 +418,18 @@ if __name__ == "__main__":
     except IndexError:
         pass
 
+    try:
+        config["efilt"] = sys.argv[4]
+    except IndexError:
+        config["efilt"] = "linearise"
+
+
     rhospace = momspace = Espace = np.logspace(-2.,2.,10)
     plot = False
 
-    # rhospace  = [1.0]
-    # momspace = [1.0]
-    # Espace = [1.0]
-    # best numerical_dim gll
-    temp = {
-        0: [[0.01], [0.01], [0.0774263682681127]] ,
-        1: [[1.6681005372000592], [0.5994842503189409], [0.01]] ,
-        2: [[4.6415888336127775], [0.21544346900318834], [0.01]] ,
-        3: [[0.027825594022071243], [0.027825594022071243], [0.01]] ,
-        4: [[0.5994842503189409], [0.01], [4.6415888336127775]] ,
-        5: [[0.027825594022071243], [0.5994842503189409], [0.01]]
-    }
-
-    rhospace, momspace, Espace = temp[testnum]
+    rhospace  = [1.0]
+    momspace = [1.0]
+    Espace = [1.0]
 
     plot = True
     savefig = True
@@ -498,7 +490,12 @@ if __name__ == "__main__":
                 score = compute_score(frres, anres)
 
                 quad = "".join([i[0] for i in a.config["quad"].split("-")])
-                fname = f"result_test-{testnum}_quad-{quad}_neles-{a.neles}_p-{a.order}_efniter-{a.config["efniter"]}-func-{a.config["effunc"]}"
+                fname = f"result_test-{testnum}_quad-{quad}_neles-{a.neles}_p-{a.order}_func-{a.config["effunc"]}"
+
+                if config["efilt"] == "bisect":
+                    fname += f"_efniter-{a.config["efniter"]}"
+                else:
+                    fname += "_linearise"
 
                 if plot:
                     fname = fname.replace("result", f"result_rhof-{frho:.2f}_momf-{fmom:.2f}_Ef-{fE:.2f}")
