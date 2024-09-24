@@ -386,9 +386,9 @@ class system:
         except KeyError:
             p_min = 1e-6
         try:
-            e_tol = self.config["e_etol"]
+            e_tol = self.config["e_tol"]
         except KeyError:
-            e_tol = 1e-6
+            e_tol = 0.0
         try:
             f_tol = self.config["f_tol"]
         except KeyError:
@@ -473,7 +473,7 @@ class system:
         except KeyError:
             rhoe_min = 1e-6
         try:
-            e_tol = self.config["e_etol"]
+            e_tol = self.config["e_tol"]
         except KeyError:
             e_tol = 0.0
 
