@@ -426,13 +426,14 @@ if __name__ == "__main__":
 
     rhospace = momspace = Espace = np.logspace(-2.,2.,10)
     plot = False
-
-    rhospace  = [1.0]
-    momspace = [1.0]
-    Espace = [1.0]
-
-    plot = True
     savefig = True
+
+    # rhospace  = [1.0]
+    # momspace = [1.0]
+    # Espace = [1.0]
+
+    # plot = True
+    # savefig = True
 
     test = state(testnum)
     config["dt"] = test.dt

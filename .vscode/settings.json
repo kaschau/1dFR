@@ -4,5 +4,8 @@
     "editor.formatOnSave": true,
     "[jsonc]": {
         "editor.defaultFormatter": "vscode.json-language-features"
-    }
+    },
+    "black-formatter.cwd": "${fileDirname}",
+    "black-formatter.importStrategy": "fromEnvironment",
+    "editor.defaultFoldingRangeProvider": "ms-python.black-formatter"
 }
