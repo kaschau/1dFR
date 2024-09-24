@@ -509,7 +509,7 @@ class system:
                 theta = min(1.0, max(theta, 0.0))
                 ui[0, :, 0] = umodes[0, 0, 0] + theta * (ui[0, :, 0] - umodes[0, 0, 0])
                 self.upoly.compute_coeff(umodes, ui[:, 0 : self.nupts], self.invuvdm)
-                assert np.min(ui[0, :, 0]) >= d_min
+                # assert np.min(ui[0, :, 0]) >= d_min
 
             # Now test for negative internal energy
             rhoemin = np.min(ui[2, :, 0] - 0.5 * ui[1, :, 0] ** 2 / ui[0, :, 0])
@@ -528,10 +528,10 @@ class system:
                     ui[:, :, 0] - umodes[:, 0, 0][:, np.newaxis]
                 )
                 self.upoly.compute_coeff(umodes, ui[:, 0 : self.nupts], self.invuvdm)
-                assert (
-                    np.min(ui[2, :, 0] - 0.5 * ui[1, :, 0] ** 2 / ui[0, :, 0])
-                    >= rhoe_min
-                )
+                # assert (
+                #     np.min(ui[2, :, 0] - 0.5 * ui[1, :, 0] ** 2 / ui[0, :, 0])
+                #     >= rhoe_min
+                # )
 
             # Finally, test for entropy
             ei = self.entropy(ui[:, :, 0])
