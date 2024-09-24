@@ -717,20 +717,15 @@ if __name__ == "__main__":
         "efEpow": 1.0,
     }
 
-    neles = int(config["mesh"].split("-")[1].split(".")[0])
-    half = int(neles / 2)
-
-    rho = np.zeros((config["p"] + 1, neles))
-    rho[:, 0:half] = 1.0
-    rho[:, half::] = 0.125
-
-    v = 0
-
-    p = np.zeros(rho.shape)
-    p[:, 0:half] = 1.0
-    p[:, half::] = 0.1
-
     a = system(config)
+
+    # test 0
+    x = a.x
+    x0 = 0.5
+    rho = np.where(x <= x0, 1.0, 0.125)
+    v = np.where(x <= x0, 0.0, 0.0)
+    p = np.where(x <= x0, 1.0, 0.1)
+
     a.set_ics([rho, v, p])
     a.run()
     plot(a)

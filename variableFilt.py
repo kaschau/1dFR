@@ -22,6 +22,7 @@ from pathlib import Path
 
 np.seterr(invalid="raise")
 
+
 def guessP(test):
     pL, rhoL, uL = test.pL, test.rhoL, test.uL
     pR, rhoR, uR = test.pR, test.rhoR, test.uR
@@ -363,21 +364,26 @@ def plotres(frres, anres, fname=None):
     if not fname:
         plt.show()
     else:
-        plt.savefig(fname+".png")
+        plt.savefig(fname + ".png")
     plt.clf()
     plt.close()
+
 
 def compute_score(frres, anres):
 
     score = 0.0
-    for key in [i for i in frres.keys() if i != 'x']:
+    for key in [i for i in frres.keys() if i != "x"]:
         vfr = frres[key].ravel("F")
         van = anres[key]
 
-        tol = np.maximum(1e-8, 0.01*van[1:-1])
+        tol = np.maximum(1e-8, 0.01 * van[1:-1])
 
-        extremax = np.bitwise_and(vfr[1:-1] > vfr[0:-2] + tol, vfr[1:-1] > vfr[2::] + tol)
-        extremin = np.bitwise_and(vfr[1:-1] < vfr[0:-2] - tol, vfr[1:-1] < vfr[2::] - tol)
+        extremax = np.bitwise_and(
+            vfr[1:-1] > vfr[0:-2] + tol, vfr[1:-1] > vfr[2::] + tol
+        )
+        extremin = np.bitwise_and(
+            vfr[1:-1] < vfr[0:-2] - tol, vfr[1:-1] < vfr[2::] - tol
+        )
 
         idx = np.bitwise_or(extremax, extremin)
 
@@ -423,17 +429,16 @@ if __name__ == "__main__":
     except IndexError:
         config["efilt"] = "linearise"
 
-
-    rhospace = momspace = Espace = np.logspace(-2.,2.,10)
-    plot = False
-    savefig = True
-
-    # rhospace  = [1.0]
-    # momspace = [1.0]
-    # Espace = [1.0]
-
-    # plot = True
+    # rhospace = momspace = Espace = np.logspace(-2.,2.,10)
+    # plot = False
     # savefig = True
+
+    rhospace = [1.0]
+    momspace = [1.0]
+    Espace = [1.0]
+
+    plot = True
+    savefig = True
 
     test = state(testnum)
     config["dt"] = test.dt
@@ -478,15 +483,21 @@ if __name__ == "__main__":
                 frres["x"] = x
                 frres["rho"] = a.u0[0]
                 frres["v"] = a.u0[1] / frres["rho"]
-                frres["p"] = (config["gamma"] - 1.0) * (a.u0[2] - 0.5 * frres["rho"] * frres["v"] ** 2)
+                frres["p"] = (config["gamma"] - 1.0) * (
+                    a.u0[2] - 0.5 * frres["rho"] * frres["v"] ** 2
+                )
 
                 # Analyrical Results
                 anres = solve(test, np.ravel(x, order="F"))
                 anres["x"] = a.x.ravel(order="F")
 
                 for key in ["rho", "v", "p"]:
-                    error[key] = [np.linalg.norm(frres[key].ravel(order="F") - anres[key], np.inf),
-                                  np.linalg.norm(frres[key].ravel(order="F") - anres[key], 2)]
+                    error[key] = [
+                        np.linalg.norm(
+                            frres[key].ravel(order="F") - anres[key], np.inf
+                        ),
+                        np.linalg.norm(frres[key].ravel(order="F") - anres[key], 2),
+                    ]
 
                 score = compute_score(frres, anres)
 
@@ -499,12 +510,18 @@ if __name__ == "__main__":
                     fname += "_linearise"
 
                 if plot:
-                    fname = fname.replace("result", f"result_rhof-{frho:.2f}_momf-{fmom:.2f}_Ef-{fE:.2f}")
+                    fname = fname.replace(
+                        "result", f"result_rhof-{frho:.2f}_momf-{fmom:.2f}_Ef-{fE:.2f}"
+                    )
                     plotres(frres, anres, fname if savefig else None)
                 else:
-                    if not Path(fname+".txt").is_file():
+                    if not Path(fname + ".txt").is_file():
                         with open(f"{fname}.txt", "w") as f:
-                            f.write("frho, fmom, fE, erho_inf, ev_inf, ep_inf, erho_2, ev_2, ep_2, score\n")
+                            f.write(
+                                "frho, fmom, fE, erho_inf, ev_inf, ep_inf, erho_2, ev_2, ep_2, score\n"
+                            )
 
                     with open(f"{fname}.txt", "a") as f:
-                        f.write(f"{frho}, {fmom}, {fE}, {error["rho"][0]}, {error["v"][0]}, {error["p"][0]}, {error["rho"][1]}, {error["v"][1]}, {error["p"][1]}, {score}\n")
+                        f.write(
+                            f"{frho}, {fmom}, {fE}, {error["rho"][0]}, {error["v"][0]}, {error["p"][0]}, {error["rho"][1]}, {error["v"][1]}, {error["p"][1]}, {score}\n"
+                        )
