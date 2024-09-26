@@ -402,7 +402,11 @@ class system:
 
         filtidx = np.where(
             np.bitwise_or(
-                dmin < d_min, np.bitwise_or(pmin < p_min, emin < entmin - e_tol)
+                dmin < d_min,
+                np.bitwise_or(
+                    pmin < p_min,
+                    np.min(u[0, :, :] * (self.entropy(u) - entmin), axis=0) < e_tol,
+                ),
             )
         )[0]
 
@@ -422,7 +426,9 @@ class system:
                 # Do da filter with current f for this solution point
                 d, p, e = self.filter_single(np.copy(umodes), ui, f, uidx)
 
-                if d < d_min or p < p_min or e < entmin[idx] - e_tol:
+                ei = self.entropy(ui[:, :, 0])
+                Xmin = min(ui[0, :, 0] * (ei - entmin[idx]))
+                if d < d_min or p < p_min or Xmin < e_tol:
 
                     # Setup root finding interval
                     flow = 0.0
@@ -436,7 +442,9 @@ class system:
 
                         d, p, e = self.filter_single(np.copy(umodes), unew, f, uidx)
 
-                        if d < d_min or p < p_min or e < entmin[idx] - e_tol:
+                        ei = self.entropy(ui[:, :, 0])
+                        Xmin = min(ui[0, :, 0] * (ei - entmin[idx]))
+                        if d < d_min or p < p_min or Xmin < e_tol:
                             fhigh = f
                         else:
                             flow = f
@@ -698,7 +706,7 @@ class system:
 
 if __name__ == "__main__":
     config = {
-        "p": 3,
+        "p": 2,
         "quad": "gauss-legendre",
         "intg": "rk3",
         "intflux": "hllc",
