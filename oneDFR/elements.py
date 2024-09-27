@@ -200,7 +200,7 @@ class system:
 
         e = np.ones(p.shape) * fpdtype_max
         idx = np.where(np.bitwise_and(rho > 0.0, p > 0.0))
-        e[idx] = p / rho**gamma
+        e[idx] = p[idx] * rho[idx] ** -gamma
 
         return e
 
