@@ -158,6 +158,7 @@ class system:
 
             self.entmin_int = np.zeros((2, neles))
             self.entropy = getattr(self, f"_entropy_{config["effunc"]}")
+            self.chi = getattr(self, f"_chi_{config["chifunc"]}")
             self.intcent = self._intcent
             self.entropy_local = self._entropy_local
             if self.efilt == "bisect":
@@ -176,7 +177,7 @@ class system:
             self.entropy_filter = noop
             self.bcent = noop
 
-    def _entropy_numerical(self, u):
+    def _entropy_nondim(self, u):
         rho = u[0]
         v = u[1] / rho
         rhoE = u[2]
@@ -190,7 +191,7 @@ class system:
 
         return e
 
-    def _entropy_physical(self, u):
+    def _entropy_nondim_exp(self, u):
         rho = u[0]
         v = u[1] / rho
         rhoE = u[2]
@@ -204,7 +205,7 @@ class system:
 
         return e
 
-    def _entropy_numerical_dim(self, u):
+    def _entropy_dim(self, u):
         # cp = 1000.0
         cv = 714.2857142857143
         # R = cp - cv
@@ -247,7 +248,7 @@ class system:
             self.entmin_int[1, 0:-2], self.entmin_int[0, 1:-1]
         )
 
-    def _get_minima_bisect(self, u, modes):
+    def _get_minima_bisect(self, u, modes, entmin):
         rho = u[0]
         v = u[1] / rho
         rhoE = u[2]
@@ -260,6 +261,8 @@ class system:
         rho = np.min(rho, axis=0)
         p = np.min(p, axis=0)
         e = np.min(e, axis=0)
+
+        X = np.min(self.chi(u, e, entmin))
 
         if not self.fpts_in_upts:
             # interpolate to faces
@@ -277,6 +280,7 @@ class system:
             rho = np.minimum(rho, np.min(rhoL, axis=0))
             p = np.minimum(p, np.min(pL, axis=0))
             e = np.minimum(e, np.min(eL, axis=0))
+            X = np.minimum(X, np.min(self.chi(uL, eL, entmin), axis=0))
 
             rhoR = uR[0]
             vR = uR[1] / rhoR
@@ -287,10 +291,12 @@ class system:
             rho = np.minimum(rho, np.min(rhoR, axis=0))
             p = np.minimum(p, np.min(pR, axis=0))
             e = np.minimum(e, np.min(eR, axis=0))
+            X = np.minimum(X, np.min(self.chi(uR, eR, entmin), axis=0))
 
-        return rho, p, e
+        return rho, p, e, X
 
-    def _get_minima_linearise(self, u, modes):
+    def _get_minima_linearise(self, u, modes, entmin):
+        return self._get_minima_bisect(u, modes, entmin)
         rho = u[0]
         v = u[1] / rho
         rhoe = u[2] - 0.5 * rho * v**2
@@ -328,7 +334,15 @@ class system:
 
         return rho, rhoe, e
 
-    def filter_single(self, umt, ui, f, uidx):
+    def _chi_numerical(self, u, e, entmin):
+
+        return u[0] * (e - entmin)
+
+    def _chi_physical(self, u, e, entmin):
+
+        return e - entmin
+
+    def filter_single(self, umt, ui, f, uidx, entmin):
         pmax = self.order + 1
         vrho = v2rho = vmom = v2mom = vE = v2E = 1.0
         for p in range(1, pmax):
@@ -353,7 +367,7 @@ class system:
 
         e = self.entropy(ui)
 
-        return rho[0], p[0], e[0]
+        return rho[0], p[0], e[0], self.chi(ui, e, entmin)
 
     def filter_full(self, umt, unew, f):
         pmax = self.order + 1
@@ -371,7 +385,7 @@ class system:
         # get new solution
         self.upoly.evaluate(unew, self.uvdm, umt)
 
-        return self.get_minima(unew, umt)
+        return self.get_minima(unew, umt, 1.0)  # <- 1.0 stand in for entmin
 
     def _entropy_filter_bisect(self, ubank):
         # assumes entmin_int is already populated
@@ -398,14 +412,14 @@ class system:
         entmin = np.min(self.entmin_int, axis=0)
 
         # compute rho, p, e for all elements
-        dmin, pmin, emin = self.get_minima(u, self.ua)
+        dmin, pmin, emin, Xmin = self.get_minima(u, self.ua, entmin)
 
         filtidx = np.where(
             np.bitwise_or(
                 dmin < d_min,
                 np.bitwise_or(
                     pmin < p_min,
-                    np.min(u[0, :, :] * (self.entropy(u) - entmin), axis=0) < e_tol,
+                    Xmin < -e_tol,
                 ),
             )
         )[0]
@@ -424,11 +438,11 @@ class system:
                     self.upoly.evaluate(ui, self.efvdm[uidx : uidx + 1], umodes)
 
                 # Do da filter with current f for this solution point
-                d, p, e = self.filter_single(np.copy(umodes), ui, f, uidx)
+                d, p, e, X = self.filter_single(
+                    np.copy(umodes), ui, f, uidx, entmin[idx]
+                )
 
-                ei = self.entropy(ui[:, :, 0])
-                Xmin = min(ui[0, :, 0] * (ei - entmin[idx]))
-                if d < d_min or p < p_min or Xmin < e_tol:
+                if d < d_min or p < p_min or X < -e_tol:
 
                     # Setup root finding interval
                     flow = 0.0
@@ -440,11 +454,11 @@ class system:
                         # define new f
                         f = 0.5 * (flow + fhigh)
 
-                        d, p, e = self.filter_single(np.copy(umodes), unew, f, uidx)
+                        d, p, e, X = self.filter_single(
+                            np.copy(umodes), unew, f, uidx, entmin[idx]
+                        )
 
-                        ei = self.entropy(ui[:, :, 0])
-                        Xmin = min(ui[0, :, 0] * (ei - entmin[idx]))
-                        if d < d_min or p < p_min or Xmin < e_tol:
+                        if d < d_min or p < p_min or X < -e_tol:
                             fhigh = f
                         else:
                             flow = f
@@ -477,26 +491,26 @@ class system:
         except KeyError:
             d_min = 1e-6
         try:
-            rhoe_min = self.config["rhoe_min"]
+            p_min = self.config["rhoe_min"]
         except KeyError:
-            rhoe_min = 1e-6
+            p_min = 1e-6
         try:
             e_tol = self.config["e_tol"]
         except KeyError:
-            e_tol = 0.0
+            e_tol = 1e-6
 
         # get min entropy for element and neighbors
         entmin = np.min(self.entmin_int, axis=0)
 
         # compute rho, p, e for all elements
-        dmin, rhoemin, emin = self.get_minima(u, self.ua)
+        dmin, pmin, emin, Xmin = self.get_minima(u, self.ua, entmin)
 
         filtidx = np.where(
             np.bitwise_or(
                 dmin < d_min,
                 np.bitwise_or(
-                    rhoemin < rhoe_min,
-                    np.min(u[0, :, :] * (self.entropy(u) - entmin), axis=0) < e_tol,
+                    pmin < p_min,
+                    Xmin < -e_tol,
                 ),
             )
         )[0]
@@ -511,19 +525,19 @@ class system:
                 self.upoly.evaluate(ui, self.efvdm, umodes)
 
             # First test for negative density
-            dmin = np.min(ui[0, :, 0])
+            dmin, pmin, emin, Xmin = self.get_minima(ui, umodes, entmin[idx])
             if dmin < d_min:
                 theta = (umodes[0, 0, 0] - d_min) / (umodes[0, 0, 0] - dmin)
                 theta = min(1.0, max(theta, 0.0))
                 ui[0, :, 0] = umodes[0, 0, 0] + theta * (ui[0, :, 0] - umodes[0, 0, 0])
                 self.upoly.compute_coeff(umodes, ui[:, 0 : self.nupts], self.invuvdm)
-                # assert np.min(ui[0, :, 0]) >= d_min
 
             # Now test for negative internal energy
-            rhoemin = np.min(ui[2, :, 0] - 0.5 * ui[1, :, 0] ** 2 / ui[0, :, 0])
-            if rhoemin < rhoe_min:
+            dmin, pmin, emin, Xmin = self.get_minima(ui, umodes, entmin[idx])
+            if pmin < p_min:
                 rhoeave = umodes[2, 0, 0] - 0.5 * umodes[1, 0, 0] ** 2 / umodes[0, 0, 0]
-                theta = (rhoeave - rhoe_min) / (rhoeave - rhoemin)
+                pave = (self.config["gamma"] - 1.0) * rhoeave
+                theta = (pave - p_min) / (pave - pmin)
                 theta = np.power(
                     np.ones(self.nvar) * min(1.0, max(theta, 0.0)),
                     [
@@ -536,19 +550,14 @@ class system:
                     ui[:, :, 0] - umodes[:, 0, 0][:, np.newaxis]
                 )
                 self.upoly.compute_coeff(umodes, ui[:, 0 : self.nupts], self.invuvdm)
-                # assert (
-                #     np.min(ui[2, :, 0] - 0.5 * ui[1, :, 0] ** 2 / ui[0, :, 0])
-                #     >= rhoe_min
-                # )
 
             # Finally, test for entropy
-            ei = self.entropy(ui[:, :, 0])
-            Xmin = min(ui[0, :, 0] * (ei - entmin[idx]))
-            if Xmin < e_tol:
-                Xavg = umodes[0, 0, 0] * (self.entropy(umodes[:, 0, :]) - entmin[idx])
-                theta = Xavg / max(
-                    Xavg - np.min(ui[0, :, 0] * (ei - entmin[idx])), 1e-16
+            dmin, pmin, emin, Xmin = self.get_minima(ui, umodes, entmin[idx])
+            if Xmin < -e_tol:
+                Xavg = self.chi(
+                    umodes[:, 0, 0], self.entropy(umodes[:, 0, :]), entmin[idx]
                 )
+                theta = (Xavg - e_tol) / (Xavg - Xmin)
                 theta = np.power(
                     np.ones(self.nvar) * min(1.0, max(theta, 0.0)),
                     [
@@ -561,9 +570,6 @@ class system:
                     ui[:, :, 0] - umodes[:, 0, 0][:, np.newaxis]
                 )
                 self.upoly.compute_coeff(umodes, ui[:, 0 : self.nupts], self.invuvdm)
-                ei = self.entropy(ui[:, :, 0])
-                # test = np.min(ui[0, :, 0] * (ei - entmin[idx]))
-                # assert test >= 0.0
 
             # Update solution
             u[:, :, idx : idx + 1] = ui[:, 0 : self.nupts, :]
@@ -706,7 +712,7 @@ class system:
 
 if __name__ == "__main__":
     config = {
-        "p": 2,
+        "p": 3,
         "quad": "gauss-legendre",
         "intg": "rk3",
         "intflux": "hllc",
@@ -718,11 +724,12 @@ if __name__ == "__main__":
         "tend": 0.2,
         "outfname": "oneD",
         "efilt": "linearise",
-        "effunc": "numerical_dim",
+        "effunc": "nondim",
         "efniter": 20,
         "efrhopow": 1.0,
         "efmompow": 1.0,
         "efEpow": 1.0,
+        "chifunc": "physical",
     }
 
     a = system(config)
