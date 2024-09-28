@@ -262,7 +262,7 @@ class system:
         p = np.min(p, axis=0)
         e = np.min(e, axis=0)
 
-        X = np.min(self.chi(u, e, entmin))
+        X = np.min(self.chi(u, e, entmin), axis=0)
 
         if not self.fpts_in_upts:
             # interpolate to faces
