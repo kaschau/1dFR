@@ -249,9 +249,10 @@ class system:
         )
 
     def _get_minima_bisect(self, u, modes, entmin):
-        rho = u[0]
-        v = u[1] / rho
-        rhoE = u[2]
+        nupts = self.nupts
+        rho = u[0, 0:nupts]
+        v = u[1, 0:nupts] / rho
+        rhoE = u[2, 0:nupts]
 
         gamma = self.config["gamma"]
         p = (gamma - 1.0) * (rhoE - 0.5 * rho * v**2)
@@ -516,6 +517,8 @@ class system:
         )[0]
 
         for idx in filtidx:
+            nupts = self.nupts
+            invuvdm = self.invuvdm
             umodes = self.ua[:, :, idx : idx + 1]
 
             if self.fpts_in_upts:
@@ -530,10 +533,10 @@ class system:
                 theta = (umodes[0, 0, 0] - d_min) / (umodes[0, 0, 0] - dmin)
                 theta = min(1.0, max(theta, 0.0))
                 ui[0, :, 0] = umodes[0, 0, 0] + theta * (ui[0, :, 0] - umodes[0, 0, 0])
-                self.upoly.compute_coeff(umodes, ui[:, 0 : self.nupts], self.invuvdm)
+                self.upoly.compute_coeff(umodes, ui[:, 0:nupts], invuvdm)
+                dmin, pmin, emin, Xmin = self.get_minima(ui, umodes, entmin[idx])
 
             # Now test for negative internal energy
-            dmin, pmin, emin, Xmin = self.get_minima(ui, umodes, entmin[idx])
             if pmin < p_min:
                 rhoeave = umodes[2, 0, 0] - 0.5 * umodes[1, 0, 0] ** 2 / umodes[0, 0, 0]
                 pave = (self.config["gamma"] - 1.0) * rhoeave
@@ -546,13 +549,13 @@ class system:
                         self.config["efEpow"],
                     ],
                 )
-                ui[:, :, 0] = umodes[:, 0, 0][:, np.newaxis] + theta[:, np.newaxis] * (
-                    ui[:, :, 0] - umodes[:, 0, 0][:, np.newaxis]
-                )
-                self.upoly.compute_coeff(umodes, ui[:, 0 : self.nupts], self.invuvdm)
+                ui[:, 0:nupts, 0] = umodes[:, 0, 0][:, np.newaxis] + theta[
+                    :, np.newaxis
+                ] * (ui[:, 0:nupts, 0] - umodes[:, 0, 0][:, np.newaxis])
+                self.upoly.compute_coeff(umodes, ui[:, 0:nupts], invuvdm)
+                dmin, pmin, emin, Xmin = self.get_minima(ui, umodes, entmin[idx])
 
             # Finally, test for entropy
-            dmin, pmin, emin, Xmin = self.get_minima(ui, umodes, entmin[idx])
             if Xmin < -e_tol:
                 Xavg = self.chi(
                     umodes[:, 0, 0], self.entropy(umodes[:, 0, :]), entmin[idx]
@@ -569,10 +572,10 @@ class system:
                 ui[:, :, 0] = umodes[:, 0, 0][:, np.newaxis] + theta[:, np.newaxis] * (
                     ui[:, :, 0] - umodes[:, 0, 0][:, np.newaxis]
                 )
-                self.upoly.compute_coeff(umodes, ui[:, 0 : self.nupts], self.invuvdm)
+                self.upoly.compute_coeff(umodes, ui[:, 0:nupts], invuvdm)
 
             # Update solution
-            u[:, :, idx : idx + 1] = ui[:, 0 : self.nupts, :]
+            u[:, :, idx : idx + 1] = ui[:, 0:nupts, :]
 
             # update modes
             self.ua[:, :, idx : idx + 1] = umodes
