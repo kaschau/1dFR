@@ -403,7 +403,7 @@ class system:
         try:
             e_tol = self.config["e_tol"]
         except KeyError:
-            e_tol = 0.0
+            e_tol = 1e-6
         try:
             f_tol = self.config["f_tol"]
         except KeyError:
@@ -456,7 +456,7 @@ class system:
                         f = 0.5 * (flow + fhigh)
 
                         d, p, e, X = self.filter_single(
-                            np.copy(umodes), unew, f, uidx, entmin[idx]
+                            np.copy(umodes), ui, f, uidx, entmin[idx]
                         )
 
                         if d < d_min or p < p_min or X < -e_tol:
@@ -471,7 +471,7 @@ class system:
 
             umodes = self.ua[:, :, idx : idx + 1]
             ## Filter entire solution with flow
-            dmin, pmin, e_min = self.filter_full(np.copy(umodes), unew, f)
+            dmin, pmin, e_min, _ = self.filter_full(np.copy(umodes), unew, f)
             emin[idx] = e_min[0]
 
             # Update final solution with filtered values
