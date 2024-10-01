@@ -706,7 +706,7 @@ class system:
         self.entropy_filter(0)
 
     def run(self):
-        while round(self.t, 5) <= self.config["tend"]:
+        while self.t < self.config["tend"]:
             try:
                 if self.niter % self.config["nout"] == 0:
                     plot(self, f"{self.config["outfname"]}_{self.niter:06d}.png")
