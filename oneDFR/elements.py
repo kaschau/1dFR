@@ -7,7 +7,7 @@ from pathlib import Path
 from oneDFR.output import plot
 
 np.seterr(all="raise")
-fpdtype_max = np.finfo(np.float64).max
+fpdtype_max = 1e10  # np.finfo(np.float64).max
 fpdtype_min = np.finfo(np.float64).eps
 
 
@@ -530,7 +530,9 @@ class system:
             # First test for negative density
             dmin, pmin, emin, Xmin = self.get_minima(ui, umodes, entmin[idx])
             if dmin < d_min:
-                theta = (umodes[0, 0, 0] - d_min) / (umodes[0, 0, 0] - dmin)
+                theta = (umodes[0, 0, 0] - d_min) / max(
+                    umodes[0, 0, 0] - dmin, fpdtype_min
+                )
                 theta = min(1.0, max(theta, 0.0))
                 ui[0, :, 0] = umodes[0, 0, 0] + theta * (ui[0, :, 0] - umodes[0, 0, 0])
                 self.upoly.compute_coeff(umodes, ui[:, 0:nupts], invuvdm)
@@ -540,7 +542,7 @@ class system:
             if pmin < p_min:
                 rhoeave = umodes[2, 0, 0] - 0.5 * umodes[1, 0, 0] ** 2 / umodes[0, 0, 0]
                 pave = (self.config["gamma"] - 1.0) * rhoeave
-                theta = (pave - p_min) / (pave - pmin)
+                theta = (pave - p_min) / max(pave - pmin, fpdtype_min)
                 theta = np.power(
                     np.ones(self.nvar) * min(1.0, max(theta, 0.0)),
                     [
@@ -560,7 +562,7 @@ class system:
                 Xavg = self.chi(
                     umodes[:, 0, 0], self.entropy(umodes[:, 0, :]), entmin[idx]
                 )
-                theta = (Xavg - e_tol) / (Xavg - Xmin)
+                theta = Xavg / (Xavg - Xmin)
                 theta = np.power(
                     np.ones(self.nvar) * min(1.0, max(theta, 0.0)),
                     [
@@ -722,17 +724,17 @@ if __name__ == "__main__":
         "gamma": 1.4,
         "nout": 0,
         "bc": "wall",
-        "mesh": "mesh-50.npy",
+        "mesh": "mesh-100.npy",
         "dt": 1e-4,
         "tend": 0.2,
         "outfname": "oneD",
-        "efilt": "linearise",
+        "efilt": "bisect",
         "effunc": "nondim",
         "efniter": 20,
         "efrhopow": 1.0,
         "efmompow": 1.0,
         "efEpow": 1.0,
-        "chifunc": "physical",
+        "chifunc": "numerical",
     }
 
     a = system(config)

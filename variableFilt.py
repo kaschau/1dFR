@@ -397,12 +397,12 @@ def compute_score(frres, anres):
 if __name__ == "__main__":
 
     config = {
-        "p": 2,
+        "p": 3,
         "intg": "rk3",
         "intflux": "hllc",
         "gamma": 1.4,
         "bc": "wall",
-        "mesh": "mesh-50.npy",
+        "mesh": "mesh-100.npy",
         "efniter": 20,
     }
 
@@ -428,6 +428,8 @@ if __name__ == "__main__":
         config["efilt"] = sys.argv[4]
     except IndexError:
         config["efilt"] = "linearise"
+
+    config["chifunc"] = sys.argv[5]
 
     # rhospace = momspace = Espace = np.logspace(-2.,2.,10)
     # plot = False
@@ -459,6 +461,17 @@ if __name__ == "__main__":
 
                 # create system
                 a = system(config)
+
+                # compute CFL = 0.1
+                CFL = 0.1
+                dx = 1.0 / a.neles / (config["p"] + 1)
+                gamma = a.config["gamma"]
+                c = max(
+                    np.sqrt(gamma * test.pL / test.rhoL),
+                    np.sqrt(gamma * test.pR / test.rhoR),
+                )
+                test.dt = CFL * dx / c
+                config["dt"] = test.dt
 
                 x = a.x
                 rho = np.where(x <= test.x0, test.rhoL, test.rhoR)
@@ -502,7 +515,7 @@ if __name__ == "__main__":
                 score = compute_score(frres, anres)
 
                 quad = "".join([i[0] for i in a.config["quad"].split("-")])
-                fname = f"result_test-{testnum}_quad-{quad}_neles-{a.neles}_p-{a.order}_func-{a.config["effunc"]}"
+                fname = f"result_test-{testnum}_quad-{quad}_neles-{a.neles}_p-{a.order}_func-{a.config["effunc"]}_chi-{a.config["chifunc"]}"
 
                 if config["efilt"] == "bisect":
                     fname += f"_efniter-{a.config["efniter"]}"
@@ -510,9 +523,9 @@ if __name__ == "__main__":
                     fname += "_linearise"
 
                 if plot:
-                    fname = fname.replace(
-                        "result", f"result_rhof-{frho:.2f}_momf-{fmom:.2f}_Ef-{fE:.2f}"
-                    )
+                    # fname = fname.replace(
+                    #     "result", f"result_rhof-{frho:.2f}_momf-{fmom:.2f}_Ef-{fE:.2f}"
+                    # )
                     plotres(frres, anres, fname if savefig else None)
                 else:
                     if not Path(fname + ".txt").is_file():

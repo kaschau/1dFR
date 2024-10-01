@@ -4,6 +4,12 @@ __pycache__/
 *$py.class
 *.png
 *.npy
+*.pyfrm
+*.pyfrs
+*.msh
+*.c
+*.vtu
+*.ini
 
 # C extensions
 *.so
