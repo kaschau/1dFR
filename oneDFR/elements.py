@@ -562,7 +562,7 @@ class system:
                 Xavg = self.chi(
                     umodes[:, 0, 0], self.entropy(umodes[:, 0, :]), entmin[idx]
                 )
-                theta = Xavg / (Xavg - Xmin)
+                theta = Xavg / max(Xavg - Xmin, fpdtype_min)
                 theta = np.power(
                     np.ones(self.nvar) * min(1.0, max(theta, 0.0)),
                     [
@@ -571,9 +571,9 @@ class system:
                         self.config["efEpow"],
                     ],
                 )
-                ui[:, :, 0] = umodes[:, 0, 0][:, np.newaxis] + theta[:, np.newaxis] * (
-                    ui[:, :, 0] - umodes[:, 0, 0][:, np.newaxis]
-                )
+                ui[:, 0:nupts, 0] = umodes[:, 0, 0][:, np.newaxis] + theta[
+                    :, np.newaxis
+                ] * (ui[:, 0:nupts, 0] - umodes[:, 0, 0][:, np.newaxis])
                 self.upoly.compute_coeff(umodes, ui[:, 0:nupts], invuvdm)
 
             # Update solution
@@ -583,7 +583,7 @@ class system:
             self.ua[:, :, idx : idx + 1] = umodes
 
             # update min interface entropy
-            emin = min(self.entropy(ui[:, :, 0]))
+            dmin, pmin, emin, Xmin = self.get_minima(ui, umodes, entmin[idx])
             self.entmin_int[:, idx : idx + 1] = emin
 
     def _u_to_f_closed(self, ubank):
