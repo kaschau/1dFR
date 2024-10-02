@@ -504,7 +504,7 @@ class system:
         entmin = np.min(self.entmin_int, axis=0)
 
         # compute rho, p, e for all elements
-        dmin, pmin, emin, Xmin = self.get_minima(u, self.ua, entmin)
+        dmin, pmin, _, Xmin = self.get_minima(u, self.ua, entmin)
 
         filtidx = np.where(
             np.bitwise_or(
@@ -536,7 +536,7 @@ class system:
                 theta = min(1.0, max(theta, 0.0))
                 ui[0, :, 0] = umodes[0, 0, 0] + theta * (ui[0, :, 0] - umodes[0, 0, 0])
                 self.upoly.compute_coeff(umodes, ui[:, 0:nupts], invuvdm)
-                dmin, pmin, emin, Xmin = self.get_minima(ui, umodes, entmin[idx])
+                dmin, pmin, _, Xmin = self.get_minima(ui, umodes, entmin[idx])
 
             # Now test for negative internal energy
             if pmin < p_min:
@@ -555,7 +555,7 @@ class system:
                     :, np.newaxis
                 ] * (ui[:, 0:nupts, 0] - umodes[:, 0, 0][:, np.newaxis])
                 self.upoly.compute_coeff(umodes, ui[:, 0:nupts], invuvdm)
-                dmin, pmin, emin, Xmin = self.get_minima(ui, umodes, entmin[idx])
+                dmin, pmin, _, Xmin = self.get_minima(ui, umodes, entmin[idx])
 
             # Finally, test for entropy
             if Xmin < -e_tol:
