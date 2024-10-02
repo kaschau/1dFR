@@ -169,7 +169,7 @@ class system:
                 self.get_minima = self._get_minima_linearise
             else:
                 raise ValueError("What entropy filter?")
-            self.bcent = self._bcent
+            self.bcent = getattr(self, f"_bc_ent_{config["bc"]}")
         else:
             self.entropy = noop
             self.intcent = noop
@@ -224,7 +224,7 @@ class system:
         return e
 
     def _entropy_local(self, ubank):
-        # assume ubank are current
+        # assume ubank is current
         u = getattr(self, f"u{ubank}")
 
         # compute element entropy
@@ -241,11 +241,11 @@ class system:
             )
 
     def _intcent(self):
-        self.entmin_int[0, 1:-1] = np.minimum(
-            self.entmin_int[0, 1:-1], self.entmin_int[1, 0:-2]
+        self.entmin_int[0, 1::] = np.minimum(
+            self.entmin_int[0, 1::], self.entmin_int[1, 0:-1]
         )
-        self.entmin_int[1, 0:-2] = np.minimum(
-            self.entmin_int[1, 0:-2], self.entmin_int[0, 1:-1]
+        self.entmin_int[1, 0:-1] = np.minimum(
+            self.entmin_int[1, 0:-1], self.entmin_int[0, 1::]
         )
 
     def _get_minima_bisect(self, u, modes, entmin):
@@ -386,7 +386,7 @@ class system:
         # get new solution
         self.upoly.evaluate(unew, self.uvdm, umt)
 
-        return self.get_minima(unew, umt, 1.0)  # <- 1.0 stand in for entmin
+        return
 
     def _entropy_filter_bisect(self, ubank):
         # assumes entmin_int is already populated
@@ -471,8 +471,7 @@ class system:
 
             umodes = self.ua[:, :, idx : idx + 1]
             ## Filter entire solution with flow
-            dmin, pmin, e_min, _ = self.filter_full(np.copy(umodes), unew, f)
-            emin[idx] = e_min[0]
+            self.filter_full(np.copy(umodes), unew, f)
 
             # Update final solution with filtered values
             u[:, :, idx : idx + 1] = unew
@@ -480,8 +479,9 @@ class system:
             # update modes
             self.upoly.compute_coeff(self.ua[:, :, idx : idx + 1], unew, self.invuvdm)
 
-        # update min interface entropy
-        self.entmin_int[:] = emin[np.newaxis, :]
+        # update all min interface entropy
+        _, _, emin, _ = self.get_minima(u, self.ua, entmin)
+        self.entmin_int[:] = emin
 
     def _entropy_filter_linearise(self, ubank):
         # assumes entmin_int is already populated
@@ -528,7 +528,7 @@ class system:
                 self.upoly.evaluate(ui, self.efvdm, umodes)
 
             # First test for negative density
-            dmin, pmin, emin, Xmin = self.get_minima(ui, umodes, entmin[idx])
+            dmin, pmin, _, Xmin = self.get_minima(ui, umodes, entmin[idx])
             if dmin < d_min:
                 theta = (umodes[0, 0, 0] - d_min) / max(
                     umodes[0, 0, 0] - dmin, fpdtype_min
@@ -582,9 +582,9 @@ class system:
             # update modes
             self.ua[:, :, idx : idx + 1] = umodes
 
-            # update min interface entropy
-            dmin, pmin, emin, Xmin = self.get_minima(ui, umodes, entmin[idx])
-            self.entmin_int[:, idx : idx + 1] = emin
+        # update all min interface entropy
+        _, _, emin, _ = self.get_minima(u, self.ua, entmin)
+        self.entmin_int[:] = emin
 
     def _u_to_f_closed(self, ubank):
         u = getattr(self, f"u{ubank}")
@@ -607,14 +607,19 @@ class system:
         self.uL[:, :, 0] = self.uL[:, :, -1]
         self.uR[:, :, -1] = self.uR[:, :, 0]
 
-    def _bcent(self):
+    def _bc_ent_wall(self):
         uL = self.uL[:, :, 0]
         eL = self.entropy(uL)
         self.entmin_int[0, 0] = min(eL[0], self.entmin_int[0, 0])
 
         uR = self.uR[:, :, -1]
         eR = self.entropy(uR)
-        self.entmin_int[-1, -1] = min(eR[0], self.entmin_int[-1, -1])
+        self.entmin_int[1, -1] = min(eR[0], self.entmin_int[1, -1])
+
+    def _bc_ent_periodic(self):
+        self.entmin_int[0, 0] = self.entmin_int[1, -1] = min(
+            self.entmin_int[0, 0], self.entmin_int[1, -1]
+        )
 
     def update_solution_stuff(self, ubank):
         u = getattr(self, f"u{ubank}")
@@ -702,6 +707,7 @@ class system:
         self.bc()
 
         self.entropy_local(0)
+        self.intcent()
         self.bcent()
         self.entropy_filter(0)
 
