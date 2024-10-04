@@ -52,3 +52,42 @@ class rk3(BaseIntegrator):
         system.entropy_filter(0)
         system.t += dt
         system.niter += 1
+
+
+class rk4(BaseIntegrator):
+    name = "rk4"
+
+    def __init__(self):
+        super().__init__()
+
+        self.nbanks = 3
+
+    def step(self, system, dt):
+        # stage 1
+        system.stage = 1
+        system.RHS(0, 1)
+
+        # stage 2
+        system.stage = 2
+        system.u2 = system.u0 + 0.5 * dt * system.u1
+        system.RHS(2, 2)
+        system.u1 = system.u0 + dt / 6.0 * system.u1 + dt / 3.0 * system.u2
+
+        # stage 3
+        system.stage = 3
+        system.u2 = system.u0 + dt / 2.0 * system.u2
+        system.RHS(2, 2)
+        system.u1 = system.u1 + dt / 3.0 * system.u2
+
+        # stage 4
+        system.stage = 4
+        system.u2 = system.u0 + dt * system.u2
+        system.RHS(2, 2)
+
+        system.u0 = system.u1 + dt / 6.0 * system.u2
+
+        # Post Process final stage solution
+        system.upoly.compute_coeff(system.ua, system.u0, system.invuvdm)
+        system.entropy_filter(0)
+        system.t += dt
+        system.niter += 1
