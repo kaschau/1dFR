@@ -257,13 +257,13 @@ class system:
         gamma = self.config["gamma"]
         p = (gamma - 1.0) * (rhoE - 0.5 * rho * v**2)
 
-        e = self.entropy(u)
+        e = self.entropy(u[:, 0:nupts])
 
         rho = np.min(rho, axis=0)
         p = np.min(p, axis=0)
-        e = np.min(e, axis=0)
 
-        X = np.min(self.chi(u, e, entmin), axis=0)
+        X = np.min(self.chi(u[:, 0:nupts], e, entmin), axis=0)
+        e = np.min(e, axis=0)
 
         if not self.fpts_in_upts:
             # interpolate to faces
@@ -280,8 +280,8 @@ class system:
 
             rho = np.minimum(rho, np.min(rhoL, axis=0))
             p = np.minimum(p, np.min(pL, axis=0))
-            e = np.minimum(e, np.min(eL, axis=0))
             X = np.minimum(X, np.min(self.chi(uL, eL, entmin), axis=0))
+            e = np.minimum(e, np.min(eL, axis=0))
 
             rhoR = uR[0]
             vR = uR[1] / rhoR
@@ -291,8 +291,8 @@ class system:
 
             rho = np.minimum(rho, np.min(rhoR, axis=0))
             p = np.minimum(p, np.min(pR, axis=0))
-            e = np.minimum(e, np.min(eR, axis=0))
             X = np.minimum(X, np.min(self.chi(uR, eR, entmin), axis=0))
+            e = np.minimum(e, np.min(eR, axis=0))
 
         return rho, p, e, X
 
