@@ -562,7 +562,7 @@ class system:
                 Xavg = self.chi(
                     umodes[:, 0, 0], self.entropy(umodes[:, 0, :]), entmin[idx]
                 )
-                theta = Xavg / max(Xavg - Xmin, fpdtype_min)
+                theta = (Xavg + e_tol) / max(Xavg - Xmin, fpdtype_min)
                 theta = np.power(
                     np.ones(self.nvar) * min(1.0, max(theta, 0.0)),
                     [
@@ -725,7 +725,7 @@ if __name__ == "__main__":
     config = {
         "p": 3,
         "quad": "gauss-legendre",
-        "intg": "rk3",
+        "intg": "rk4",
         "intflux": "hllc",
         "gamma": 1.4,
         "nout": 0,
@@ -734,7 +734,7 @@ if __name__ == "__main__":
         "dt": 1e-4,
         "tend": 0.2,
         "outfname": "oneD",
-        "efilt": "bisect",
+        "efilt": "linearise",
         "effunc": "nondim",
         "efniter": 20,
         "efrhopow": 1.0,
@@ -745,12 +745,25 @@ if __name__ == "__main__":
 
     a = system(config)
 
-    # test 0
     x = a.x
+    # test 0
     x0 = 0.5
     rho = np.where(x <= x0, 1.0, 0.125)
     v = np.where(x <= x0, 0.0, 0.0)
     p = np.where(x <= x0, 1.0, 0.1)
+
+    # # sin
+    # rho = 2 + np.sin(2 * np.pi * x)
+    # v = 1.0
+    # p = 1.0
+    # # compute CFL = 0.1
+    # CFL = 0.1
+    # dx = 1.0 / a.neles / (config["p"] + 1)
+    # gamma = a.config["gamma"]
+    # c = np.sqrt(gamma * np.max(p) / np.min(rho)) + np.max(np.abs(v))
+    # dt = CFL * dx / c
+    # config["dt"] = dt
+    # config["tend"] = 5.0
 
     a.set_ics([rho, v, p])
     a.run()
