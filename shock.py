@@ -369,31 +369,6 @@ def plotres(frres, anres, fname=None):
     plt.close()
 
 
-def compute_score(frres, anres):
-
-    score = 0.0
-    for key in [i for i in frres.keys() if i != "x"]:
-        vfr = frres[key].ravel("F")
-        van = anres[key]
-
-        tol = np.maximum(1e-8, 0.01 * van[1:-1])
-
-        extremax = np.bitwise_and(
-            vfr[1:-1] > vfr[0:-2] + tol, vfr[1:-1] > vfr[2::] + tol
-        )
-        extremin = np.bitwise_and(
-            vfr[1:-1] < vfr[0:-2] - tol, vfr[1:-1] < vfr[2::] - tol
-        )
-
-        idx = np.bitwise_or(extremax, extremin)
-
-        score += np.linalg.norm(vfr[1:-1][idx] - van[1:-1][idx])
-
-        score += np.linalg.norm(vfr - van)
-
-    return score
-
-
 if __name__ == "__main__":
 
     config = {
@@ -414,7 +389,7 @@ if __name__ == "__main__":
     try:
         config["effunc"] = sys.argv[2]
     except IndexError:
-        pass
+        config["effunc"] = "dim"
 
     try:
         if sys.argv[3] == "gll":
@@ -422,25 +397,15 @@ if __name__ == "__main__":
         else:
             config["quad"] = "gauss-legendre"
     except IndexError:
-        pass
+        config["quad"] = "gauss-legendre-lobatto"
 
     try:
         config["efilt"] = sys.argv[4]
     except IndexError:
         config["efilt"] = "linearise"
 
-    config["chifunc"] = sys.argv[5]
-
-    # rhospace = momspace = Espace = np.logspace(-2.,2.,10)
-    # plot = False
-    # savefig = True
-
-    rhospace = [1.0]
-    momspace = [1.0]
-    Espace = [1.0]
-
     plot = True
-    savefig = True
+    savefig = False
 
     test = state(testnum)
     config["dt"] = test.dt
@@ -449,92 +414,66 @@ if __name__ == "__main__":
     config["nout"] = 0  # round(test.t / test.dt)
 
     error = dict()
-    for frho in rhospace:
-        for fmom in momspace:
-            for fE in Espace:
 
-                print(f"Working on {frho}, {fmom}, {fE}")
+    # create system
+    a = system(config)
 
-                config["efrhopow"] = frho
-                config["efmompow"] = fmom
-                config["efEpow"] = fE
+    # compute CFL = 0.1
+    CFL = 0.1
+    dx = 1.0 / a.neles / (config["p"] + 1)
+    gamma = a.config["gamma"]
+    c = max(
+        np.sqrt(gamma * test.pL / test.rhoL),
+        np.sqrt(gamma * test.pR / test.rhoR),
+    )
+    test.dt = CFL * dx / c
+    config["dt"] = test.dt
 
-                # create system
-                a = system(config)
+    x = a.x
+    rho = np.where(x <= test.x0, test.rhoL, test.rhoR)
+    v = np.where(x <= test.x0, test.uL, test.uR)
+    p = np.where(x <= test.x0, test.pL, test.pR)
 
-                # compute CFL = 0.1
-                CFL = 0.1
-                dx = 1.0 / a.neles / (config["p"] + 1)
-                gamma = a.config["gamma"]
-                c = max(
-                    np.sqrt(gamma * test.pL / test.rhoL),
-                    np.sqrt(gamma * test.pR / test.rhoR),
-                )
-                test.dt = CFL * dx / c
-                config["dt"] = test.dt
+    a.set_ics([rho, v, p])
+    try:
+        a.run()
+    except Exception as e:
+        import sys
+        import traceback
 
-                x = a.x
-                rho = np.where(x <= test.x0, test.rhoL, test.rhoR)
-                v = np.where(x <= test.x0, test.uL, test.uR)
-                p = np.where(x <= test.x0, test.pL, test.pR)
+        print(f"{e}")
+        exc_type, exc_value, exc_traceback = sys.exc_info()
+        traceback.print_exception(exc_type, exc_value, exc_traceback)
+        print("NaN Detected")
 
-                a.set_ics([rho, v, p])
-                try:
-                    a.run()
-                except Exception as e:
-                    import sys
-                    import traceback
+    # Flux Reconstruction results
+    frres = dict()
+    frres["x"] = x
+    frres["rho"] = a.u0[0]
+    frres["v"] = a.u0[1] / frres["rho"]
+    frres["p"] = (config["gamma"] - 1.0) * (
+        a.u0[2] - 0.5 * frres["rho"] * frres["v"] ** 2
+    )
 
-                    print(f"{e}")
-                    exc_type, exc_value, exc_traceback = sys.exc_info()
-                    traceback.print_exception(exc_type, exc_value, exc_traceback)
-                    print("NaN Detected")
-                    continue
+    # Analyrical Results
+    anres = solve(test, np.ravel(x, order="F"))
+    anres["x"] = a.x.ravel(order="F")
 
-                # Flux Reconstruction results
-                frres = dict()
-                frres["x"] = x
-                frres["rho"] = a.u0[0]
-                frres["v"] = a.u0[1] / frres["rho"]
-                frres["p"] = (config["gamma"] - 1.0) * (
-                    a.u0[2] - 0.5 * frres["rho"] * frres["v"] ** 2
-                )
+    for key in ["rho", "v", "p"]:
+        error[key] = [
+            np.linalg.norm(
+                frres[key].ravel(order="F") - anres[key], np.inf
+            ),
+            np.linalg.norm(frres[key].ravel(order="F") - anres[key], 2),
+        ]
 
-                # Analyrical Results
-                anres = solve(test, np.ravel(x, order="F"))
-                anres["x"] = a.x.ravel(order="F")
+    quad = "".join([i[0] for i in a.config["quad"].split("-")])
+    fname = f"result_test-{testnum}_quad-{quad}_neles-{a.neles}_p-{a.order}_func-{a.config["effunc"]}"
 
-                for key in ["rho", "v", "p"]:
-                    error[key] = [
-                        np.linalg.norm(
-                            frres[key].ravel(order="F") - anres[key], np.inf
-                        ),
-                        np.linalg.norm(frres[key].ravel(order="F") - anres[key], 2),
-                    ]
+    if config["efilt"] == "bisect":
+        fname += f"_efniter-{a.config["efniter"]}"
+    else:
+        fname += "_linearise"
 
-                score = compute_score(frres, anres)
-
-                quad = "".join([i[0] for i in a.config["quad"].split("-")])
-                fname = f"result_test-{testnum}_quad-{quad}_neles-{a.neles}_p-{a.order}_func-{a.config["effunc"]}_chi-{a.config["chifunc"]}"
-
-                if config["efilt"] == "bisect":
-                    fname += f"_efniter-{a.config["efniter"]}"
-                else:
-                    fname += "_linearise"
-
-                if plot:
-                    # fname = fname.replace(
-                    #     "result", f"result_rhof-{frho:.2f}_momf-{fmom:.2f}_Ef-{fE:.2f}"
-                    # )
-                    plotres(frres, anres, fname if savefig else None)
-                else:
-                    if not Path(fname + ".txt").is_file():
-                        with open(f"{fname}.txt", "w") as f:
-                            f.write(
-                                "frho, fmom, fE, erho_inf, ev_inf, ep_inf, erho_2, ev_2, ep_2, score\n"
-                            )
-
-                    with open(f"{fname}.txt", "a") as f:
-                        f.write(
-                            f"{frho}, {fmom}, {fE}, {error["rho"][0]}, {error["v"][0]}, {error["p"][0]}, {error["rho"][1]}, {error["v"][1]}, {error["p"][1]}, {score}\n"
-                        )
+    if plot:
+        plotres(frres, anres, fname if savefig else None)

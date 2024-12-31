@@ -80,7 +80,6 @@ if __name__ == "__main__":
         config["quad"] = "gauss-legendre"
 
     config["efilt"] = sys.argv[4]
-    config["chifunc"] = sys.argv[5]
 
     config["p"] = int(sys.argv[6])
 
@@ -91,10 +90,6 @@ if __name__ == "__main__":
 
     config["tend"] = 5.0
     config["nout"] = 0  # round(test.t / test.dt)
-
-    config["efrhopow"] = 1.0
-    config["efmompow"] = 1.0
-    config["efEpow"] = 1.0
 
     # create system
     a = system(config)
@@ -125,11 +120,9 @@ if __name__ == "__main__":
         a.u0[2] - 0.5 * frres["rho"] * frres["v"] ** 2
     )
     exact = 2.0 + np.sin(2 * np.pi * (x - a.t))
-    # error = np.linalg.norm(frres["rho"].ravel() - exact.ravel(), 2)
-    error = np.linalg.norm(frres["rho"].ravel() - exact.ravel(), np.inf)
 
     quad = "".join([i[0] for i in a.config["quad"].split("-")])
-    fname = f"converge_-{a.neles}_quad-{quad}_neles-{a.neles}_p-{a.order}_func-{a.config["effunc"]}_chi-{a.config["chifunc"]}-{error:.15f}"
+    fname = f"converge_-{a.neles}_quad-{quad}_neles-{a.neles}_p-{a.order}_func-{a.config["effunc"]}"
     fname += f"_etol-{sys.argv[7]}"
 
     if config["efilt"] == "bisect":

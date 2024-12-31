@@ -158,7 +158,6 @@ class system:
 
             self.entmin_int = np.zeros((2, neles))
             self.entropy = getattr(self, f"_entropy_{config["effunc"]}")
-            self.chi = getattr(self, f"_chi_{config["chifunc"]}")
             self.intcent = self._intcent
             self.entropy_local = self._entropy_local
             if self.efilt == "bisect":
@@ -262,7 +261,7 @@ class system:
         rho = np.min(rho, axis=0)
         p = np.min(p, axis=0)
 
-        X = np.min(self.chi(u[:, 0:nupts], e, entmin), axis=0)
+        X = np.min(self._chi(u[:, 0:nupts], e, entmin), axis=0)
         e = np.min(e, axis=0)
 
         if not self.fpts_in_upts:
@@ -280,7 +279,7 @@ class system:
 
             rho = np.minimum(rho, np.min(rhoL, axis=0))
             p = np.minimum(p, np.min(pL, axis=0))
-            X = np.minimum(X, np.min(self.chi(uL, eL, entmin), axis=0))
+            X = np.minimum(X, np.min(self._chi(uL, eL, entmin), axis=0))
             e = np.minimum(e, np.min(eL, axis=0))
 
             rhoR = uR[0]
@@ -291,7 +290,7 @@ class system:
 
             rho = np.minimum(rho, np.min(rhoR, axis=0))
             p = np.minimum(p, np.min(pR, axis=0))
-            X = np.minimum(X, np.min(self.chi(uR, eR, entmin), axis=0))
+            X = np.minimum(X, np.min(self._chi(uR, eR, entmin), axis=0))
             e = np.minimum(e, np.min(eR, axis=0))
 
         return rho, p, e, X
@@ -335,27 +334,17 @@ class system:
 
         return rho, rhoe, e
 
-    def _chi_numerical(self, u, e, entmin):
-
+    def _chi(self, u, e, entmin):
         return u[0] * (e - entmin)
-
-    def _chi_physical(self, u, e, entmin):
-
-        return e - entmin
 
     def filter_single(self, umt, ui, f, uidx, entmin):
         pmax = self.order + 1
-        vrho = v2rho = vmom = v2mom = vE = v2E = 1.0
+        v = 1.0
         for p in range(1, pmax):
-            v2rho *= vrho * vrho * f ** self.config["efrhopow"]
-            v2mom *= vmom * vmom * f ** self.config["efmompow"]
-            v2E *= vE * vE * f ** self.config["efEpow"]
-            vrho *= f ** self.config["efrhopow"]
-            vmom *= f ** self.config["efmompow"]
-            vE *= f ** self.config["efEpow"]
-            umt[0, p] *= v2rho
-            umt[1, p] *= v2mom
-            umt[2, p] *= v2E
+            v *= v * v * f
+            umt[0, p] *= v
+            umt[1, p] *= v
+            umt[2, p] *= v
         # get new solution
         self.upoly.evaluate(ui, self.efvdm[uidx : uidx + 1], umt)
 
@@ -368,21 +357,16 @@ class system:
 
         e = self.entropy(ui)
 
-        return rho[0], p[0], e[0], self.chi(ui, e, entmin)
+        return rho[0], p[0], e[0], self._chi(ui, e, entmin)
 
     def filter_full(self, umt, unew, f):
         pmax = self.order + 1
-        vrho = v2rho = vmom = v2mom = vE = v2E = 1.0
+        v = 1.0
         for p in range(1, pmax):
-            v2rho *= vrho * vrho * f ** self.config["efrhopow"]
-            v2mom *= vmom * vmom * f ** self.config["efmompow"]
-            v2E *= vE * vE * f ** self.config["efEpow"]
-            vrho *= f ** self.config["efrhopow"]
-            vmom *= f ** self.config["efmompow"]
-            vE *= f ** self.config["efEpow"]
-            umt[0, p] *= v2rho
-            umt[1, p] *= v2mom
-            umt[2, p] *= v2E
+            v *= v * v * f
+            umt[0, p] *= v
+            umt[1, p] *= v
+            umt[2, p] *= v
         # get new solution
         self.upoly.evaluate(unew, self.uvdm, umt)
 
@@ -543,37 +527,21 @@ class system:
                 rhoeave = umodes[2, 0, 0] - 0.5 * umodes[1, 0, 0] ** 2 / umodes[0, 0, 0]
                 pave = (self.config["gamma"] - 1.0) * rhoeave
                 theta = (pave - p_min) / max(pave - pmin, fpdtype_min)
-                theta = np.power(
-                    np.ones(self.nvar) * min(1.0, max(theta, 0.0)),
-                    [
-                        self.config["efrhopow"],
-                        self.config["efmompow"],
-                        self.config["efEpow"],
-                    ],
-                )
-                ui[:, 0:nupts, 0] = umodes[:, 0, 0][:, np.newaxis] + theta[
-                    :, np.newaxis
-                ] * (ui[:, 0:nupts, 0] - umodes[:, 0, 0][:, np.newaxis])
+                theta = min(1.0, max(theta, 0.0))
+
+                ui[:, 0:nupts, 0] = umodes[:, 0, 0][:, np.newaxis] + theta * (ui[:, 0:nupts, 0] - umodes[:, 0, 0][:, np.newaxis])
                 self.upoly.compute_coeff(umodes, ui[:, 0:nupts], invuvdm)
                 dmin, pmin, _, Xmin = self.get_minima(ui, umodes, entmin[idx])
 
             # Finally, test for entropy
             if Xmin < -e_tol:
-                Xavg = self.chi(
+                Xavg = self._chi(
                     umodes[:, 0, 0], self.entropy(umodes[:, 0, :]), entmin[idx]
                 )
                 theta = (Xavg + e_tol) / max(Xavg - Xmin, fpdtype_min)
-                theta = np.power(
-                    np.ones(self.nvar) * min(1.0, max(theta, 0.0)),
-                    [
-                        self.config["efrhopow"],
-                        self.config["efmompow"],
-                        self.config["efEpow"],
-                    ],
-                )
-                ui[:, 0:nupts, 0] = umodes[:, 0, 0][:, np.newaxis] + theta[
-                    :, np.newaxis
-                ] * (ui[:, 0:nupts, 0] - umodes[:, 0, 0][:, np.newaxis])
+                theta = min(1.0, max(theta, 0.0))
+
+                ui[:, 0:nupts, 0] = umodes[:, 0, 0][:, np.newaxis] + theta * (ui[:, 0:nupts, 0] - umodes[:, 0, 0][:, np.newaxis])
                 self.upoly.compute_coeff(umodes, ui[:, 0:nupts], invuvdm)
 
             # Update solution
@@ -735,12 +703,7 @@ if __name__ == "__main__":
         "tend": 0.2,
         "outfname": "oneD",
         "efilt": "linearise",
-        "effunc": "nondim",
         "efniter": 20,
-        "efrhopow": 1.0,
-        "efmompow": 1.0,
-        "efEpow": 1.0,
-        "chifunc": "numerical",
     }
 
     a = system(config)
