@@ -56,8 +56,6 @@ def plotres(frres, fname=None):
         plt.show()
     else:
         plt.savefig(fname + ".png")
-    plt.clf()
-    plt.close()
 
 
 if __name__ == "__main__":
@@ -70,30 +68,48 @@ if __name__ == "__main__":
         "efniter": 20,
     }
 
-    config["mesh"] = f"mesh-{sys.argv[1]}.npy"
+    try:
+        neles = sys.argv[1]
+    except IndexError:
+        neles = 100
+    config["mesh"] = f"mesh-{neles}.npy"
 
-    config["effunc"] = sys.argv[2]
+    try:
+        config["effunc"] = sys.argv[2]
+    except IndexError:
+        config["effunc"] = "dim"
 
-    if sys.argv[3] == "gll":
-        config["quad"] = "gauss-legendre-lobatto"
-    elif sys.argv[3] == "gl":
+    try:
+        if sys.argv[3] == "gll":
+            config["quad"] = "gauss-legendre-lobatto"
+        elif sys.argv[3] == "gl":
+            config["quad"] = "gauss-legendre"
+    except IndexError:
         config["quad"] = "gauss-legendre"
 
-    config["efilt"] = sys.argv[4]
+    try:
+        config["efilt"] = sys.argv[4]
+    except IndexError:
+        config["efilt"] = "linear"
 
-    config["p"] = int(sys.argv[6])
+    try:
+        config["p"] = int(sys.argv[5])
+    except IndexError:
+        config["p"] = 1
 
-    config["e_tol"] = float(sys.argv[7])
+    try:
+        config["e_tol"] = float(sys.argv[6])
+    except IndexError:
+        config["e_tol"] = 1e-6
 
     plot = True
-    savefig = True
+    savefig = False
 
-    config["tend"] = 5.0
+    config["tend"] = 1.0
     config["nout"] = 0  # round(test.t / test.dt)
 
     # create system
     a = system(config)
-    config["outfname"] = f"converge_{a.neles}"
 
     x = a.x
     rho = 2.0 + np.sin(2 * np.pi * x)
@@ -122,8 +138,7 @@ if __name__ == "__main__":
     exact = 2.0 + np.sin(2 * np.pi * (x - a.t))
 
     quad = "".join([i[0] for i in a.config["quad"].split("-")])
-    fname = f"converge_-{a.neles}_quad-{quad}_neles-{a.neles}_p-{a.order}_func-{a.config["effunc"]}"
-    fname += f"_etol-{sys.argv[7]}"
+    fname = f"quad-{quad}_neles-{a.neles}_p-{a.order}_func-{a.config["effunc"]}"
 
     if config["efilt"] == "bisect":
         fname += f"_efniter-{a.config["efniter"]}"

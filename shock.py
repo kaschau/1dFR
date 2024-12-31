@@ -397,7 +397,7 @@ if __name__ == "__main__":
         else:
             config["quad"] = "gauss-legendre"
     except IndexError:
-        config["quad"] = "gauss-legendre-lobatto"
+        config["quad"] = "gauss-legendre"
 
     try:
         config["efilt"] = sys.argv[4]
