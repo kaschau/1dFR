@@ -374,9 +374,10 @@ if __name__ == "__main__":
     config = {
         "p": 3,
         "intg": "rk3",
-        "intflux": "hllc",
+        "intflux": "rusanov",
         "gamma": 1.4,
-        "bc": "wall",
+        "bcl": "same",
+        "bcr": "same",
         "mesh": "mesh-100.npy",
         "efniter": 20,
     }
@@ -461,9 +462,7 @@ if __name__ == "__main__":
 
     for key in ["rho", "v", "p"]:
         error[key] = [
-            np.linalg.norm(
-                frres[key].ravel(order="F") - anres[key], np.inf
-            ),
+            np.linalg.norm(frres[key].ravel(order="F") - anres[key], np.inf),
             np.linalg.norm(frres[key].ravel(order="F") - anres[key], 2),
         ]
 

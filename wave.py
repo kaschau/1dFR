@@ -62,9 +62,10 @@ if __name__ == "__main__":
 
     config = {
         "intg": "rk4",
-        "intflux": "hllc",
+        "intflux": "rusanov",
         "gamma": 1.4,
-        "bc": "periodic",
+        "bcl": "periodic",
+        "bcr": "periodic",
         "efniter": 20,
     }
 
@@ -90,7 +91,7 @@ if __name__ == "__main__":
     try:
         config["efilt"] = sys.argv[4]
     except IndexError:
-        config["efilt"] = "linear"
+        config["efilt"] = None
 
     try:
         config["p"] = int(sys.argv[5])
@@ -140,10 +141,6 @@ if __name__ == "__main__":
     quad = "".join([i[0] for i in a.config["quad"].split("-")])
     fname = f"quad-{quad}_neles-{a.neles}_p-{a.order}_func-{a.config["effunc"]}"
 
-    if config["efilt"] == "bisect":
-        fname += f"_efniter-{a.config["efniter"]}"
-    else:
-        fname += "_linearise"
-
     if plot:
         plotres(frres, fname if savefig else None)
+# type: ignore

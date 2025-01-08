@@ -100,6 +100,9 @@ class system:
         # compute g' of correction functions at solution points
         c = 0  # Vincent constant 0 = nodal DG
         self.gL, self.gR = vcjg(order, c, self.upts, der=True)
+        # compute g' of correction functions at flux points
+        self.gLf, _ = vcjg(order, c, np.array([-1]), der=True)
+        _, self.gRf = vcjg(order, c, np.array([1]), der=True)
 
         # set interpolation to face
         if self.fpts_in_upts:
@@ -108,7 +111,8 @@ class system:
             self.u_to_f = self._u_to_f_open
 
         # SET BOUNDARY CONDITIONS
-        self.bc = getattr(self, f"_bc_{config["bc"]}")
+        self.bcl = getattr(self, f"_bc_{config["bcl"]}")
+        self.bcr = getattr(self, f"_bc_{config["bcr"]}")
 
         # set flux
         self.flux = subclass_where(BaseFlux, name=config["intflux"])(config)
@@ -168,7 +172,8 @@ class system:
                 self.get_minima = self._get_minima_linearise
             else:
                 raise ValueError("What entropy filter?")
-            self.bcent = getattr(self, f"_bc_ent_{config["bc"]}")
+            self.bcentl = getattr(self, f"_bc_ent_{config["bcl"]}")
+            self.bcentr = getattr(self, f"_bc_ent_{config["bcr"]}")
         else:
             self.entropy = noop
             self.intcent = noop
@@ -529,7 +534,9 @@ class system:
                 theta = (pave - p_min) / max(pave - pmin, fpdtype_min)
                 theta = min(1.0, max(theta, 0.0))
 
-                ui[:, 0:nupts, 0] = umodes[:, 0, 0][:, np.newaxis] + theta * (ui[:, 0:nupts, 0] - umodes[:, 0, 0][:, np.newaxis])
+                ui[:, 0:nupts, 0] = umodes[:, 0, 0][:, np.newaxis] + theta * (
+                    ui[:, 0:nupts, 0] - umodes[:, 0, 0][:, np.newaxis]
+                )
                 self.upoly.compute_coeff(umodes, ui[:, 0:nupts], invuvdm)
                 dmin, pmin, _, Xmin = self.get_minima(ui, umodes, entmin[idx])
 
@@ -541,7 +548,9 @@ class system:
                 theta = (Xavg + e_tol) / max(Xavg - Xmin, fpdtype_min)
                 theta = min(1.0, max(theta, 0.0))
 
-                ui[:, 0:nupts, 0] = umodes[:, 0, 0][:, np.newaxis] + theta * (ui[:, 0:nupts, 0] - umodes[:, 0, 0][:, np.newaxis])
+                ui[:, 0:nupts, 0] = umodes[:, 0, 0][:, np.newaxis] + theta * (
+                    ui[:, 0:nupts, 0] - umodes[:, 0, 0][:, np.newaxis]
+                )
                 self.upoly.compute_coeff(umodes, ui[:, 0:nupts], invuvdm)
 
             # Update solution
@@ -567,24 +576,66 @@ class system:
         # interpolate solution to right face
         self.upoly.evaluate(self.uR[:, :, 0:-1], self.lvdm, self.ua)
 
-    def _bc_wall(self):
-        self.uL[:, :, 0] = self.uR[:, :, 0]
-        self.uR[:, :, -1] = self.uL[:, :, -1]
+    def _bc_wall(self, ul, side):
+        # ul is the given state, need to determine exterior
+        # ur, then compute the common flux
+        ur = ul
+        ur[1] = -ul[1]
 
-    def _bc_periodic(self):
-        self.uL[:, :, 0] = self.uL[:, :, -1]
-        self.uR[:, :, -1] = self.uR[:, :, 0]
+        f = np.empty((self.nvar, 1))
+        if side == "left":
+            self.flux.intflux(ul, ur, f)
+        else:
+            self.flux.intflux(ur, ul, f)
 
-    def _bc_ent_wall(self):
-        uL = self.uL[:, :, 0]
-        eL = self.entropy(uL)
-        self.entmin_int[0, 0] = min(eL[0], self.entmin_int[0, 0])
+        return f
 
-        uR = self.uR[:, :, -1]
-        eR = self.entropy(uR)
-        self.entmin_int[1, -1] = min(eR[0], self.entmin_int[1, -1])
+    def _bc_same(self, ul, side):
+        # ul is the given state, need to determine exterior
+        # ur, then compute the common flux
+        ur = ul
 
-    def _bc_ent_periodic(self):
+        f = np.empty((self.nvar, 1))
+        if side == "left":
+            self.flux.intflux(ul, ur, f)
+        else:
+            self.flux.intflux(ur, ul, f)
+
+        return f
+
+    def _bc_periodic(self, ul=None, side=None):
+        if side == "left":
+            # self.uL[:, :, 0] = self.uL[:, :, -1]
+            ul = self.uL[:, :, -1]
+            ur = self.uR[:, :, 0]
+        else:
+            # self.uR[:, :, -1] = self.uR[:, :, 0]
+            ul = self.uL[:, :, -1]
+            ur = self.uR[:, :, 0]
+
+        f = np.empty((self.nvar, 1))
+        self.flux.intflux(ul, ur, f)
+
+        return f
+
+    def _bc_ent_wall(self, ul, side):
+        ur = ul
+        ur[1] = -ul[1]
+        e = self.entropy(ur)
+        if side == "left":
+            self.entmin_int[0, 0] = min(e[0], self.entmin_int[0, 0])
+        else:
+            self.entmin_int[1, -1] = min(e[0], self.entmin_int[1, -1])
+
+    def _bc_ent_same(self, ul, side):
+        ur = ul
+        e = self.entropy(ur)
+        if side == "left":
+            self.entmin_int[0, 0] = min(e[0], self.entmin_int[0, 0])
+        else:
+            self.entmin_int[1, -1] = min(e[0], self.entmin_int[1, -1])
+
+    def _bc_ent_periodic(self, *args, **kwargs):
         self.entmin_int[0, 0] = self.entmin_int[1, -1] = min(
             self.entmin_int[0, 0], self.entmin_int[1, -1]
         )
@@ -599,10 +650,10 @@ class system:
         # interpolate solution to face
         self.u_to_f(ubank)
 
+        # compte interface entropy
         self.intcent()
-        # compute bcs
-        self.bc()
-        self.bcent()
+        self.bcentl(self.uR[:, :, 0], "left")
+        self.bcentr(self.uL[:, :, -1], "right")
 
     def update_flux_stuff(self, ubank, fbankout):
         u = getattr(self, f"u{ubank}")
@@ -614,7 +665,11 @@ class system:
         self.upoly.compute_coeff(self.fa, f, self.invuvdm)
 
         # compute common fluxes
-        self.flux.intflux(self.uL, self.uR, self.fc)
+        self.flux.intflux(self.uL[:, :, 1:-1], self.uR[:, :, 1:-1], self.fc[:, :, 1:-1])
+
+        # compute common flux on bcs
+        self.fc[:, :, 0] = self.bcl(self.uR[:, :, 0], "left")
+        self.fc[:, :, -1] = self.bcr(self.uL[:, :, -1], "right")
 
     def build_negdivconf(self, fbankout):
         # Begin building of negdivconf
@@ -672,11 +727,12 @@ class system:
         # prepare for first iteration
         self.upoly.compute_coeff(self.ua, u, self.invuvdm)
         self.u_to_f(0)
-        self.bc()
 
         self.entropy_local(0)
         self.intcent()
-        self.bcent()
+
+        self.bcentl(self.uR[:, :, 0], "left")
+        self.bcentr(self.uL[:, :, -1], "right")
         self.entropy_filter(0)
 
     def run(self):
@@ -691,42 +747,37 @@ class system:
 
 if __name__ == "__main__":
     config = {
-        "p": 3,
+        "p": 1,
         "quad": "gauss-legendre",
         "intg": "rk4",
-        "intflux": "hllc",
+        "intflux": "rusanov",
         "gamma": 1.4,
         "nout": 0,
-        "bc": "wall",
-        "mesh": "mesh-100.npy",
-        "dt": 1e-4,
-        "tend": 0.2,
+        "bcl": "periodic",
+        "bcr": "periodic",
+        "mesh": "mesh-50.npy",
         "outfname": "oneD",
-        "efilt": "linearise",
+        "efilt": None,
         "efniter": 20,
     }
 
     a = system(config)
 
     x = a.x
-    # test 0
-    x0 = 0.5
-    rho = np.where(x <= x0, 1.0, 0.125)
-    v = np.where(x <= x0, 0.0, 0.0)
-    p = np.where(x <= x0, 1.0, 0.1)
 
-    # # sin
-    # rho = 2 + np.sin(2 * np.pi * x)
-    # v = 1.0
-    # p = 1.0
-    # # compute CFL = 0.1
-    # CFL = 0.1
-    # dx = 1.0 / a.neles / (config["p"] + 1)
-    # gamma = a.config["gamma"]
-    # c = np.sqrt(gamma * np.max(p) / np.min(rho)) + np.max(np.abs(v))
-    # dt = CFL * dx / c
-    # config["dt"] = dt
-    # config["tend"] = 5.0
+    # sin
+    rho = 2 + np.sin(2 * np.pi * x)
+    v = 1.0
+    p = 1.0
+
+    # compute CFL = 0.1
+    CFL = 0.1
+    dx = 1.0 / a.neles / (config["p"] + 1)
+    gamma = a.config["gamma"]
+    c = np.sqrt(gamma * np.max(p) / np.min(rho)) + np.max(np.abs(v))
+    dt = CFL * dx / c
+    config["dt"] = dt
+    config["tend"] = 1.0
 
     a.set_ics([rho, v, p])
     a.run()
