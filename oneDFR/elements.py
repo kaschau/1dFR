@@ -96,6 +96,9 @@ class system:
 
         # flux derivative vandermonde
         self.dfvdm = self.dfpoly.vandermonde(self.upts)
+        # left and right derivative vandermonde
+        self.ldfvdm = self.dfpoly.vandermonde([-1])
+        self.rdfvdm = self.dfpoly.vandermonde([1])
 
         # compute g' of correction functions at solution points
         c = 0  # Vincent constant 0 = nodal DG
@@ -138,6 +141,9 @@ class system:
         self.fl = np.zeros((nvar, 1, neles))
         # flux polyl @ Xi=1
         self.fr = np.zeros((nvar, 1, neles))
+        # solution derivative on left and right face
+        self.duL = np.zeros((nvar, 1))
+        self.duR = np.zeros((nvar, 1))
 
         # create integrator
         self.intg = subclass_where(BaseIntegrator, name=config["intg"])()
@@ -179,7 +185,8 @@ class system:
             self.intcent = noop
             self.entropy_local = noop
             self.entropy_filter = noop
-            self.bcent = noop
+            self.bcentl = noop
+            self.bcentr = noop
 
     def _entropy_nondim(self, u):
         rho = u[0]
@@ -576,7 +583,7 @@ class system:
         # interpolate solution to right face
         self.upoly.evaluate(self.uR[:, :, 0:-1], self.lvdm, self.ua)
 
-    def _bc_wall(self, ul, side):
+    def _bc_wall(self, ul, dul, side):
         # ul is the given state, need to determine exterior
         # ur, then compute the common flux
         ur = ul
@@ -590,7 +597,7 @@ class system:
 
         return f
 
-    def _bc_same(self, ul, side):
+    def _bc_same(self, ul, dul, side):
         # ul is the given state, need to determine exterior
         # ur, then compute the common flux
         ur = ul
@@ -603,7 +610,7 @@ class system:
 
         return f
 
-    def _bc_periodic(self, ul=None, side=None):
+    def _bc_periodic(self, ul=None, dul=None, side=None):
         if side == "left":
             # self.uL[:, :, 0] = self.uL[:, :, -1]
             ul = self.uL[:, :, -1]
@@ -617,6 +624,72 @@ class system:
         self.flux.intflux(ul, ur, f)
 
         return f
+
+    def _bc_nscbc_out_p(self, ul, dul, side):
+        p_inf = 1.0
+        sigma = 0.25
+
+        # flux on face
+        f = np.zeros((self.nvar, 1))
+        p, v = self.flux.flux(ul, f)
+
+        rho = ul[0]
+        rhov = ul[1]
+        rhoE = ul[2]
+
+        if side == "left":
+            invJac = self.invJac[0]
+        else:
+            invJac = self.invJac[-1]
+
+        drho = dul[0] * invJac
+        drhov = dul[1] * invJac
+        drhoE = dul[2] * invJac
+
+        gamma = self.config["gamma"]
+        c = np.sqrt(self.config["gamma"] * p / rho)
+
+        K = sigma * c * (1 - (v / c) ** 2) / 1.0
+
+        # spatial derivative (physical)
+        dp = (gamma - 1.0) * (drhoE - 0.5 * drho * v**2 - rhov * drhov)
+        dv = (drhov - drho * v) / rho
+
+        # wave amplitude velocities
+        lam1 = v - c
+        lam2 = v
+        lam3 = v + c
+
+        L1 = lam1 * (dp - rho * c * dv)
+        L2 = lam2 * (c**2 * drho - dp)
+        L3 = K * (p - p_inf)
+
+        # now we can compute d
+        d1 = 1 / c**2 * (L2 + 0.5 * (L3 + L1))
+        d2 = 1 / 2 * (L3 + L1)
+        d3 = 1 / (2 * rho * c) * (L3 - L1)
+
+        # now compute dudt
+        dudt = np.zeros((self.nvar, 1))
+        dudt[0] = -d1
+        dudt[1] = -v * d1 + rho * d3
+        dudt[2] = -0.5 * v**2 * d1 - d2 / (gamma - 1) + rhov * d3
+
+        if side == "left":
+            dfa = self.dfpoly.diff_coeff(self.fa[:, :, 0])
+            vdm = self.ldfvdm
+            dg = self.gLf
+        else:
+            dfa = self.dfpoly.diff_coeff(self.fa[:, :, -1])
+            vdm = self.rdfvdm
+            dg = self.gRf
+            pass
+        df = np.zeros((self.nvar, 1))
+        # derivative of flux at face
+        self.dfpoly.evaluate(df, vdm, dfa)
+        fc = (-1.0 / invJac * dudt - df + f * dg) / dg
+
+        return fc
 
     def _bc_ent_wall(self, ul, side):
         ur = ul
@@ -667,9 +740,14 @@ class system:
         # compute common fluxes
         self.flux.intflux(self.uL[:, :, 1:-1], self.uR[:, :, 1:-1], self.fc[:, :, 1:-1])
 
-        # compute common flux on bcs
-        self.fc[:, :, 0] = self.bcl(self.uR[:, :, 0], "left")
-        self.fc[:, :, -1] = self.bcr(self.uL[:, :, -1], "right")
+        # compute solution derivative (w.r.t comp coords) on left and right faces
+        duaL = self.dfpoly.diff_coeff(self.ua[:, :, 0])
+        self.dfpoly.evaluate(self.duL, self.ldfvdm, duaL)
+        duaR = self.dfpoly.diff_coeff(self.ua[:, :, -1])
+        self.dfpoly.evaluate(self.duR, self.rdfvdm, duaR)
+        # compute common flux on boundary
+        self.fc[:, :, 0] = self.bcl(self.uR[:, :, 0], self.duL, "left")
+        self.fc[:, :, -1] = self.bcr(self.uL[:, :, -1], self.duR, "right")
 
     def build_negdivconf(self, fbankout):
         # Begin building of negdivconf
@@ -739,7 +817,11 @@ class system:
         while self.t < self.config["tend"]:
             try:
                 if self.niter % self.config["nout"] == 0:
-                    plot(self, f"{self.config["outfname"]}_{self.niter:06d}.png")
+                    if self.config["outfname"] is not None:
+                        fname = f"{self.config["outfname"]}_{self.niter:06d}.png"
+                    else:
+                        fname = None
+                    plot(self, fname)
             except ZeroDivisionError:
                 pass
             self.intg.step(self, self.config["dt"])
@@ -747,16 +829,16 @@ class system:
 
 if __name__ == "__main__":
     config = {
-        "p": 1,
+        "p": 2,
         "quad": "gauss-legendre",
         "intg": "rk4",
         "intflux": "rusanov",
         "gamma": 1.4,
-        "nout": 0,
-        "bcl": "periodic",
-        "bcr": "periodic",
+        "nout": 50,
+        "bcl": "same",
+        "bcr": "nscbc_out_p",
         "mesh": "mesh-50.npy",
-        "outfname": "oneD",
+        "outfname": None,
         "efilt": None,
         "efniter": 20,
     }
@@ -766,9 +848,15 @@ if __name__ == "__main__":
     x = a.x
 
     # sin
-    rho = 2 + np.sin(2 * np.pi * x)
-    v = 1.0
-    p = 1.0
+    # rho = 2 + np.sin(2 * np.pi * x)
+    # v = 1.0
+    # p = 1.0
+
+    # wave
+    center = 0.7
+    rho = 1.0
+    v = 1 + 0.1 * np.exp(-((x - center) ** 2) / (2 * 0.05**2))
+    p = 1 + 0.1 * np.exp(-((x - center) ** 2) / (2 * 0.05**2))
 
     # compute CFL = 0.1
     CFL = 0.1
