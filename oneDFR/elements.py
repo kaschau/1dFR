@@ -583,9 +583,10 @@ class system:
         # interpolate solution to right face
         self.upoly.evaluate(self.uR[:, :, 0:-1], self.lvdm, self.ua)
 
-    def _bc_wall(self, ul, dul, side):
+    def _bc_wall(self, ul, dul, nl, side):
         # ul is the given state, need to determine exterior
         # ur, then compute the common flux
+        # nl is outward normal
         ur = ul
         ur[1] = -ul[1]
 
@@ -597,7 +598,7 @@ class system:
 
         return f
 
-    def _bc_same(self, ul, dul, side):
+    def _bc_same(self, ul, dul, nl, side):
         # ul is the given state, need to determine exterior
         # ur, then compute the common flux
         ur = ul
@@ -610,7 +611,7 @@ class system:
 
         return f
 
-    def _bc_periodic(self, ul=None, dul=None, side=None):
+    def _bc_periodic(self, ul=None, dul=None, nl=None, side=None):
         if side == "left":
             # self.uL[:, :, 0] = self.uL[:, :, -1]
             ul = self.uL[:, :, -1]
@@ -625,7 +626,7 @@ class system:
 
         return f
 
-    def _bc_nscbc_out_p(self, ul, dul, side):
+    def _bc_nscbc_out_p(self, ul, dul, nl, side):
         p_inf = 1.0
         sigma = 0.25
 
@@ -663,6 +664,72 @@ class system:
         L1 = lam1 * (dp - rho * c * dv)
         L2 = lam2 * (c**2 * drho - dp)
         L3 = K * (p - p_inf)
+
+        # now we can compute d
+        d1 = 1 / c**2 * (L2 + 0.5 * (L3 + L1))
+        d2 = 1 / 2 * (L3 + L1)
+        d3 = 1 / (2 * rho * c) * (L3 - L1)
+
+        # now compute dudt
+        dudt = np.zeros((self.nvar, 1))
+        dudt[0] = -d1
+        dudt[1] = -v * d1 + rho * d3
+        dudt[2] = -0.5 * v**2 * d1 - d2 / (gamma - 1) + rhov * d3
+
+        if side == "left":
+            dfa = self.dfpoly.diff_coeff(self.fa[:, :, 0])
+            vdm = self.ldfvdm
+            dg = self.gLf
+        else:
+            dfa = self.dfpoly.diff_coeff(self.fa[:, :, -1])
+            vdm = self.rdfvdm
+            dg = self.gRf
+            pass
+        df = np.zeros((self.nvar, 1))
+        # derivative of flux at face
+        self.dfpoly.evaluate(df, vdm, dfa)
+        fc = (-1.0 / invJac * dudt - df + f * dg) / dg
+
+        return fc
+
+    def _bc_nscbc_in_u(self, ul, dul, nl, side):
+        v_inf = 0.0
+        sigma = 0.25
+
+        # flux on face
+        f = np.zeros((self.nvar, 1))
+        p, v = self.flux.flux(ul, f)
+
+        rho = ul[0]
+        rhov = ul[1]
+        rhoE = ul[2]
+
+        if side == "left":
+            invJac = self.invJac[0]
+        else:
+            invJac = self.invJac[-1]
+
+        drho = dul[0] * invJac
+        drhov = dul[1] * invJac
+        drhoE = dul[2] * invJac
+
+        gamma = self.config["gamma"]
+        c = np.sqrt(self.config["gamma"] * p / rho)
+
+        K = sigma * c * (1 - (v / c) ** 2) / 1.0
+
+        # spatial derivative (physical)
+        dp = (gamma - 1.0) * (drhoE - 0.5 * drho * v**2 - rhov * drhov)
+        dv = (drhov - drho * v) / rho
+
+        # wave amplitude velocities
+        lam1 = v - c
+        lam2 = v
+        lam3 = v + c
+
+        L1 = K * (v - v_inf)
+        L2 = 0.0
+        L3 = lam1 * (dp + rho * c * dv)
 
         # now we can compute d
         d1 = 1 / c**2 * (L2 + 0.5 * (L3 + L1))
@@ -746,8 +813,8 @@ class system:
         duaR = self.dfpoly.diff_coeff(self.ua[:, :, -1])
         self.dfpoly.evaluate(self.duR, self.rdfvdm, duaR)
         # compute common flux on boundary
-        self.fc[:, :, 0] = self.bcl(self.uR[:, :, 0], self.duL, "left")
-        self.fc[:, :, -1] = self.bcr(self.uL[:, :, -1], self.duR, "right")
+        self.fc[:, :, 0] = self.bcl(self.uR[:, :, 0], self.duL, -1, "left")
+        self.fc[:, :, -1] = self.bcr(self.uL[:, :, -1], self.duR, 1, "right")
 
     def build_negdivconf(self, fbankout):
         # Begin building of negdivconf
