@@ -25,9 +25,9 @@ class Rusanov(BaseFlux):
     def __init__(self, config):
         super().__init__(config)
 
-    def intflux(self, uL, uR, f):
-        fL = np.zeros(f.shape)
-        fR = np.zeros(f.shape)
+    def intflux(self, uL, uR):
+        fL = np.zeros(uL.shape)
+        fR = np.zeros(uR.shape)
 
         pL, vL = self.flux(uL, fL)
         pR, vR = self.flux(uR, fR)
@@ -38,7 +38,7 @@ class Rusanov(BaseFlux):
             np.abs(vL + vR)
         )
 
-        f[:] = 0.5 * (fL + fR) - a * (uR - uL)
+        return 0.5 * (fL + fR) - a * (uR - uL)
 
 
 class HLLC(BaseFlux):
