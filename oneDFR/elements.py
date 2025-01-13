@@ -69,43 +69,106 @@ class system:
         self.t = 0.0
         self.niter = 0
 
-        self.nvar = nvar = 3
+        self.nvar = nvar = 3  # 1D
+        self.nfpts = 2  # 1D
         self.order = order = config["p"]
         self.nupts = nupts = order + 1
 
-        # solution and flux deriv polys
-        self.upoly = LegendrePoly(order)
-        self.dfpoly = LegendrePoly(order - 1)
+        # solution space polynomial
+        self.ppoly = LegendrePoly(order)
+        # derivative space polynomial
+        self.dppoly = LegendrePoly(order - 1)
 
-        # get num solution points
+        # get solution points in transformed space
         self.upts = get_quad_rules(config)
 
-        # test if flux points are part of solution points
+        # read grid
+        self.read_grid()
+        neles = self.neles
+
+        # create solution point inverse/vandermonde matrix
+        # Generalized vandermond V = \Psi(~x)
+        # Evaluated at solution points
+        # and its inverse, V^{-1}
+        # [nupts x p+1] = [nupts x nupts]
+        self.uvdm = self.ppoly.vandermonde(self.upts)
+        self.invuvdm = np.linalg.inv(self.uvdm)
+
+        # **********************************************************
+        # CONSTRUCT NODAL BASIS SET OPERATOR M0 = lu(~xf) = V^{-1}V(~xf)
+        # An operator to interpolate the solution to the flux points
+        # i.e. M0 * u = u_f
+        # M0 => [nfpts x nupts]
+        # u => [nvar x nupts]
+        # u_f => [nvar x nfpts]
+        # **********************************************************
+
+        # Now we need V(~xf)
+        lvdm = self.ppoly.vandermonde(-1)[0]
+        rvdm = self.ppoly.vandermonde(1)[0]
+        Vxf = np.array([lvdm, rvdm])
+
+        self.M0 = Vxf @ self.invuvdm
+
+        # **********************************************************
+        # CONSTRUCT GRADIENT of NODAL BASIS SET OPERATOR
+        # M1 = grad lu(~xu) = V^{-1}V'(~xu)
+        # An operator to compute the derivative of the function at solution
+        # points
+        # i.e. M1 * f = f'
+        # M1 => [nupts x nupts]
+        # f => [nvar x nupts]
+        # f' => [nvar x nupts]
+        # **********************************************************
+        def dVdx(x):
+            p = len(x) - 1
+            dV = np.zeros((p + 1, p + 1))
+            if p > 0:
+                dV[:, 1] = 1.0
+            for row in range(p):
+                for column in range(2, p):
+                    dV[row, column] = column * x[row] ** (column - 1)
+
+            return dV
+
+        dV = dVdx(self.upts)
+        self.M1 = dV @ self.invuvdm
+
+        # in 1D, M2 = M0 since the normal is just one.
+        self.M2 = self.M0
+
+        # **********************************************************
+        # CONSTRUCT GRADIENT OF CORRECTION FUNCTION AT SOLUTION POINTS
+        # compute g' of correction functions at solution points in transformed space
+        c = 0  # Vincent constant 0 = nodal DG
+        self.gL, self.gR = vcjg(order, c, self.upts, der=True)
+        # [nupts x nfpts]
+        self.M3 = np.array([self.gL, self.gR])
+
+        # solution derivative space vandermonde at flux points
+        # [nfpts x nupts - 1]
+        # NEW FOR NSCBC
+        self.Minf = np.array(
+            [self.dppoly.vandermonde(-1)[0], self.dppoly.vandermonde(1)[0]]
+        )
+
+        # compute derivative of correction functions at flux points in transformed space
+        self.gLf, _ = vcjg(order, c, np.array([-1]), der=True)
+        _, self.gRf = vcjg(order, c, np.array([1]), der=True)
+        # [nfpts x nupts]
+        self.M6 = np.array([self.gLf, self.gRf])
+
+        # create integrator and state arrays
+        # [nvar x nupts x neles]
+        self.intg = subclass_where(BaseIntegrator, name=config["intg"])()
+        for bank in range(self.intg.nbanks):
+            setattr(self, f"u{bank}", np.zeros((nvar, nupts, neles)))
+
+        # test if flux points are subset of solution points
         if -1 in self.upts:
             self.fpts_in_upts = True
         else:
             self.fpts_in_upts = False
-
-        # create solution point inverse/vandermonde matrix
-        self.uvdm = self.upoly.vandermonde(self.upts)
-        self.invuvdm = np.linalg.inv(self.uvdm)
-
-        # left and right solution vandermonde
-        self.lvdm = self.upoly.vandermonde([-1])
-        self.rvdm = self.upoly.vandermonde([1])
-
-        # flux derivative vandermonde
-        self.dfvdm = self.dfpoly.vandermonde(self.upts)
-        # left and right derivative vandermonde
-        self.ldfvdm = self.dfpoly.vandermonde([-1])
-        self.rdfvdm = self.dfpoly.vandermonde([1])
-
-        # compute g' of correction functions at solution points
-        c = 0  # Vincent constant 0 = nodal DG
-        self.gL, self.gR = vcjg(order, c, self.upts, der=True)
-        # compute g' of correction functions at flux points
-        self.gLf, _ = vcjg(order, c, np.array([-1]), der=True)
-        _, self.gRf = vcjg(order, c, np.array([1]), der=True)
 
         # set interpolation to face
         if self.fpts_in_upts:
@@ -120,35 +183,26 @@ class system:
         # set flux
         self.flux = subclass_where(BaseFlux, name=config["intflux"])(config)
 
-        # read grid
-        self.read_grid()
-        neles = self.neles
-
         # allocate arrays
         # solution modes
         self.ua = np.zeros((nvar, nupts, neles))
         # flux poly'l modes
-        self.fa = np.zeros((nvar, nupts, neles))
+        # self.fa = np.zeros((nvar, nupts, neles))
         # solution @ Xi=1 (left side of interfaces)
-        self.uL = np.zeros((nvar, 1, neles + 1))
+        self.uL = np.zeros((nvar, neles + 1))
         # solution @ Xi=-1 (right side of interfaces)
-        self.uR = np.zeros((nvar, 1, neles + 1))
+        self.uR = np.zeros((nvar, neles + 1))
         # continuous flux values
-        self.fc = np.zeros((nvar, 1, neles + 1))
+        self.fc = np.zeros((nvar, neles + 1))
         # flux derivative modes
-        self.dfa = np.zeros((nvar, nupts - 1, neles))
+        # self.dfa = np.zeros((nvar, nupts - 1, neles))
         # flux polyl @ Xi=-1
-        self.fl = np.zeros((nvar, 1, neles))
+        self.fl = np.zeros((nvar, neles))
         # flux polyl @ Xi=1
-        self.fr = np.zeros((nvar, 1, neles))
+        self.fr = np.zeros((nvar, neles))
         # solution derivative on left and right face
-        self.duL = np.zeros((nvar, 1))
-        self.duR = np.zeros((nvar, 1))
-
-        # create integrator
-        self.intg = subclass_where(BaseIntegrator, name=config["intg"])()
-        for bank in range(self.intg.nbanks):
-            setattr(self, f"u{bank}", np.zeros((nvar, nupts, neles)))
+        self.duL = np.zeros(nvar)
+        self.duR = np.zeros(nvar)
 
         # see if we are filtering
         self.efilt = self.config["efilt"]
@@ -387,6 +441,8 @@ class system:
     def _entropy_filter_bisect(self, ubank):
         # assumes entmin_int is already populated
         u = getattr(self, f"u{ubank}")
+        # compute solution poly'l modes
+        self.ppoly.compute_coeff(self.ua, u, self.invuvdm)
 
         try:
             d_min = self.config["d_min"]
@@ -482,6 +538,8 @@ class system:
     def _entropy_filter_linearise(self, ubank):
         # assumes entmin_int is already populated
         u = getattr(self, f"u{ubank}")
+        # compute solution poly'l modes
+        self.ppoly.compute_coeff(self.ua, u, self.invuvdm)
 
         try:
             d_min = self.config["d_min"]
@@ -573,15 +631,21 @@ class system:
     def _u_to_f_closed(self, ubank):
         u = getattr(self, f"u{ubank}")
         # REMEMBER, RIGHT interface is LEFT side of element
-        self.uL[:, 0, 1::] = u[:, -1, :]
-        self.uR[:, 0, 0:-1] = u[:, 0, :]
+        self.uL[:, 1::] = u[:, -1, :]
+        self.uR[:, 0:-1] = u[:, 0, :]
 
-    def _u_to_f_open(self, *args):
+    def _u_to_f_open(self, ubank):
+        u = getattr(self, f"u{ubank}")
         # REMEMBER, RIGHT interface is LEFT side of element
-        # interpolate solution to left face
-        self.upoly.evaluate(self.uL[:, :, 1::], self.rvdm, self.ua)
-        # interpolate solution to right face
-        self.upoly.evaluate(self.uR[:, :, 0:-1], self.lvdm, self.ua)
+        temp = np.einsum("fx, vx... -> fv...", self.M0, u)
+        # interpolate solution to left element face,
+        # which is the right interface value, but comes from
+        # the left vandermond which is the first element of M0
+        self.uR[:, 0:-1] = temp[0]
+        # interpolate solution to right element face,
+        # which is the left interface value, but comes from
+        # the right vandermond which is the second element of M0
+        self.uL[:, 1::] = temp[1]
 
     def _bc_wall(self, ul, dul, nl, side):
         # ul is the given state, need to determine exterior
@@ -614,14 +678,14 @@ class system:
     def _bc_periodic(self, ul=None, dul=None, nl=None, side=None):
         if side == "left":
             # self.uL[:, :, 0] = self.uL[:, :, -1]
-            ul = self.uL[:, :, -1]
-            ur = self.uR[:, :, 0]
+            ul = self.uL[:, -1]
+            ur = self.uR[:, 0]
         else:
             # self.uR[:, :, -1] = self.uR[:, :, 0]
-            ul = self.uL[:, :, -1]
-            ur = self.uR[:, :, 0]
+            ul = self.uL[:, -1]
+            ur = self.uR[:, 0]
 
-        f = np.empty((self.nvar, 1))
+        f = np.empty(self.nvar)
         self.flux.intflux(ul, ur, f)
 
         return f
@@ -780,73 +844,55 @@ class system:
             self.entmin_int[0, 0], self.entmin_int[1, -1]
         )
 
-    def update_solution_stuff(self, ubank):
-        u = getattr(self, f"u{ubank}")
-        # create solution poly'l
-        self.upoly.compute_coeff(self.ua, u, self.invuvdm)
+    def RHS(self, ubankin, fbankout):
 
-        self.entropy_filter(ubank)
+        u = getattr(self, f"u{ubankin}")
+        f = getattr(self, f"u{fbankout}")
+
+        self.entropy_filter(ubankin)
 
         # interpolate solution to face
-        self.u_to_f(ubank)
+        self.u_to_f(ubankin)
 
         # compte interface entropy
         self.intcent()
-        self.bcentl(self.uR[:, :, 0], "left")
-        self.bcentr(self.uL[:, :, -1], "right")
+        self.bcentl(self.uR[:, 0], "left")
+        self.bcentr(self.uL[:, -1], "right")
 
-    def update_flux_stuff(self, ubank, fbankout):
-        u = getattr(self, f"u{ubank}")
-        f = getattr(self, f"u{fbankout}")
-        # compute pointwise fluxes
+        # compute pointwise fluxes at solution points
         self.flux.flux(u, f)
 
-        # compute flux poly'l coeffs
-        self.upoly.compute_coeff(self.fa, f, self.invuvdm)
+        # compute common fluxes at interior faces
+        self.flux.intflux(self.uL[:, 1:-1], self.uR[:, 1:-1], self.fc[:, 1:-1])
 
-        # compute common fluxes
-        self.flux.intflux(self.uL[:, :, 1:-1], self.uR[:, :, 1:-1], self.fc[:, :, 1:-1])
+        # # compute solution derivative (w.r.t comp coords) on left and right faces
+        # duaL = self.dppoly.diff_coeff(self.ua[:, 0])
+        # self.dppoly.evaluate(self.duL, self.ldfvdm, duaL)
+        # duaR = self.dppoly.diff_coeff(self.ua[:, -1])
+        # self.dppoly.evaluate(self.duR, self.rdfvdm, duaR)
 
-        # compute solution derivative (w.r.t comp coords) on left and right faces
-        duaL = self.dfpoly.diff_coeff(self.ua[:, :, 0])
-        self.dfpoly.evaluate(self.duL, self.ldfvdm, duaL)
-        duaR = self.dfpoly.diff_coeff(self.ua[:, :, -1])
-        self.dfpoly.evaluate(self.duR, self.rdfvdm, duaR)
         # compute common flux on boundary
-        self.fc[:, :, 0] = self.bcl(self.uR[:, :, 0], self.duL, -1, "left")
-        self.fc[:, :, -1] = self.bcr(self.uL[:, :, -1], self.duR, 1, "right")
+        self.fc[:, 0] = self.bcl(self.uR[:, 0], self.duL, -1, "left")
+        self.fc[:, -1] = self.bcr(self.uL[:, -1], self.duR, 1, "right")
 
-    def build_negdivconf(self, fbankout):
+        # evaluate discontinuous flux at flux points
+        temp = np.einsum("ux...,vx...->vu...", self.M2, f)
+        self.fl[:], self.fr[:] = temp[:, 0, :], temp[:, -1, :]
+
         # Begin building of negdivconf
         negdivconf = getattr(self, f"u{fbankout}")
 
         # compute flux derivative at solution points
-        self.dfa[:] = self.dfpoly.diff_coeff(self.fa)
-        self.dfpoly.evaluate(negdivconf, self.dfvdm, self.dfa)
+        negdivconf[:] = np.einsum("ux...,vx...->vu...", self.M1, f)
 
-        # evaluate + add the left jumps to negdivconf
-        self.upoly.evaluate(self.fl, self.lvdm, self.fa)
-        negdivconf += np.einsum(
-            "vx...,x...->vx...", self.fc[:, :, 0:-1] - self.fl, self.gL
-        )
+        # add the left jumps to negdivconf
+        negdivconf += np.einsum("v...,x...->vx...", self.fc[:, 0:-1] - self.fl, self.gL)
 
-        # eval + add the right jumps to negdivconf
-        self.upoly.evaluate(self.fr, self.rvdm, self.fa)
-        negdivconf += np.einsum(
-            "vx...,x...->vx...", self.fc[:, :, 1::] - self.fr, self.gR
-        )
+        # add the right jumps to negdivconf
+        negdivconf += np.einsum("v...,x...->vx...", self.fc[:, 1::] - self.fr, self.gR)
 
         # transform to neg flux in physical coords
         negdivconf *= -self.invJac
-
-    def RHS(self, ubankin, fbankout):
-
-        # assumes ubank is up to date
-        self.update_solution_stuff(ubankin)
-
-        self.update_flux_stuff(ubankin, fbankout)
-
-        self.build_negdivconf(fbankout)
 
     def read_grid(self):
         fname = self.config["mesh"]
@@ -870,14 +916,13 @@ class system:
         u[2, :] = 0.5 * pris[0] * pris[1] ** 2 + pris[2] / (self.config["gamma"] - 1.0)
 
         # prepare for first iteration
-        self.upoly.compute_coeff(self.ua, u, self.invuvdm)
         self.u_to_f(0)
 
         self.entropy_local(0)
         self.intcent()
 
-        self.bcentl(self.uR[:, :, 0], "left")
-        self.bcentr(self.uL[:, :, -1], "right")
+        self.bcentl(self.uR[:, 0], "left")
+        self.bcentr(self.uL[:, -1], "right")
         self.entropy_filter(0)
 
     def run(self):
@@ -896,14 +941,14 @@ class system:
 
 if __name__ == "__main__":
     config = {
-        "p": 2,
+        "p": 1,
         "quad": "gauss-legendre",
         "intg": "rk4",
         "intflux": "rusanov",
         "gamma": 1.4,
-        "nout": 50,
-        "bcl": "same",
-        "bcr": "nscbc_out_p",
+        "nout": 0,
+        "bcl": "periodic",
+        "bcr": "periodic",
         "mesh": "mesh-50.npy",
         "outfname": None,
         "efilt": None,
@@ -914,16 +959,24 @@ if __name__ == "__main__":
 
     x = a.x
 
+    # line
+    # rho = 1.0
+    # rhov = 1 + x
+    # v = rhov / rho
+    # rhoE = 1 + x
+    # p = (1.4 - 1.0) * (rhoE - 0.5 * rho * v**2)
+
     # sin
-    # rho = 2 + np.sin(2 * np.pi * x)
-    # v = 1.0
-    # p = 1.0
+    rho = 2 + np.sin(2 * np.pi * x)
+    v = 1.0
+    p = 1.0
 
     # wave
-    center = 0.7
-    rho = 1.0
-    v = 1 + 0.1 * np.exp(-((x - center) ** 2) / (2 * 0.05**2))
-    p = 1 + 0.1 * np.exp(-((x - center) ** 2) / (2 * 0.05**2))
+    # center = 0.5
+    # height = 0.25
+    # rho = 1.0
+    # v = 0  # 1 + height * np.exp(-((x - center) ** 2) / (2 * 0.05**2))
+    # p = 1 + height * np.exp(-((x - center) ** 2) / (2 * 0.05**2))
 
     # compute CFL = 0.1
     CFL = 0.1
@@ -932,7 +985,7 @@ if __name__ == "__main__":
     c = np.sqrt(gamma * np.max(p) / np.min(rho)) + np.max(np.abs(v))
     dt = CFL * dx / c
     config["dt"] = dt
-    config["tend"] = 1.0
+    config["tend"] = 0.212340
 
     a.set_ics([rho, v, p])
     a.run()

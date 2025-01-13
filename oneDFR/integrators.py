@@ -48,7 +48,6 @@ class rk3(BaseIntegrator):
         )
 
         # Post Process final stage solution
-        system.upoly.compute_coeff(system.ua, system.u0, system.invuvdm)
         system.entropy_filter(0)
         system.t += dt
         system.niter += 1
@@ -87,7 +86,6 @@ class rk4(BaseIntegrator):
         system.u0 = system.u1 + dt / 6.0 * system.u2
 
         # Post Process final stage solution
-        system.upoly.compute_coeff(system.ua, system.u0, system.invuvdm)
         system.entropy_filter(0)
         system.t += dt
         system.niter += 1
