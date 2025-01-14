@@ -125,8 +125,8 @@ class system:
             dV = np.zeros((p + 1, p + 1))
             if p > 0:
                 dV[:, 1] = 1.0
-            for row in range(p):
-                for column in range(2, p):
+            for row in range(p + 1):
+                for column in range(2, p + 1):
                     dV[row, column] = column * x[row] ** (column - 1)
 
             return dV
@@ -841,9 +841,9 @@ class system:
         self.u_to_f(ubankin)
 
         # compte interface entropy
-        # self.intcent()
-        # self.bcentl(self.uR[:, 0], "left")
-        # self.bcentr(self.uL[:, -1], "right")
+        self.intcent()
+        self.bcentl(self.uf[:, 0, 0], "left")
+        self.bcentr(self.uf[:, -1, -1], "right")
 
         # compute pointwise fluxes at solution points
         self.flux.flux(u, f)
@@ -905,9 +905,9 @@ class system:
         self.entropy_local(0)
         self.intcent()
 
-        # self.bcentl(self.uR[:, 0], "left")
-        # self.bcentr(self.uL[:, -1], "right")
-        # self.entropy_filter(0)
+        self.bcentl(self.uf[:, 0, 0], "left")
+        self.bcentr(self.uf[:, 0, -1], "right")
+        self.entropy_filter(0)
 
     def run(self):
         while self.t < self.config["tend"]:
@@ -969,7 +969,7 @@ if __name__ == "__main__":
     c = np.sqrt(gamma * np.max(p) / np.min(rho)) + np.max(np.abs(v))
     dt = CFL * dx / c
     config["dt"] = dt
-    config["tend"] = 1.0
+    config["tend"] = 5.0
 
     a.set_ics([rho, v, p])
     a.run()
