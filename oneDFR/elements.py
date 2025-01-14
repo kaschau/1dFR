@@ -29,34 +29,45 @@ def get_quad_rules(config):
         return data[0]
 
 
-def vcjg(k, c, x, der=False):
+def dVdx(p, x):
+    dV = np.zeros((len(x), p + 1))
+    if p > 0:
+        dV[:, 1] = 1.0
+    for row in range(dV.shape[0]):
+        for column in range(2, p + 1):
+            dV[row, column] = column * x[row] ** (column - 1)
+
+    return dV
+
+
+def vcjg(p, c, x, der=False):
 
     if c == 0:
         etak = 0.0
     elif c == 1:
-        etak = k / (k + 1)
+        etak = p / (p + 1)
     elif c == 2:
-        etak = (k + 1) / k
+        etak = (p + 1) / p
     else:
         raise ValueError
 
-    Legk = LegendrePoly(k)
-    Legkm = LegendrePoly(k - 1)
-    Legkp = LegendrePoly(k + 1)
+    Legp = LegendrePoly(p)
+    Legpm = LegendrePoly(p - 1)
+    Legpp = LegendrePoly(p + 1)
 
     def g(x, etak):
         return 0.5 * (Lk(x) + (etak * Lkm(x) + Lkp(x)) / (1 + etak))
 
     if not der:
-        Lk = Legk.basis_at
-        Lkm = Legkm.basis_at
-        Lkp = Legkp.basis_at
+        Lk = Legp.basis_at
+        Lkm = Legpm.basis_at
+        Lkp = Legpp.basis_at
         gr = g(x, etak)
         gl = g(-x, etak)
     else:
-        Lk = Legk.dbasis_at
-        Lkm = Legkm.dbasis_at
-        Lkp = Legkp.dbasis_at
+        Lk = Legp.dbasis_at
+        Lkm = Legpm.dbasis_at
+        Lkp = Legpp.dbasis_at
         gr = g(x, etak)
         gl = -g(-x, etak)
 
@@ -115,24 +126,13 @@ class system:
         # M1 = grad lu(~xu) = V^{-1}V'(~xu)
         # An operator to compute the derivative of the function at solution
         # points
-        # i.e. M1 * f = f'
+        # i.e. M1 * f|x=xu = f'|x=xu
         # M1 => [nupts x nupts]
         # f => [nvar x nupts]
         # f' => [nvar x nupts]
         # **********************************************************
-        def dVdx(x):
-            p = len(x) - 1
-            dV = np.zeros((p + 1, p + 1))
-            if p > 0:
-                dV[:, 1] = 1.0
-            for row in range(p + 1):
-                for column in range(2, p + 1):
-                    dV[row, column] = column * x[row] ** (column - 1)
-
-            return dV
-
-        dV = dVdx(self.upts)
-        self.M1 = dV @ self.invuvdm
+        dV = dVdx(self.order, self.upts)
+        self.M1 = self.M4 = np.einsum("xp,pu->xu", dV, self.invuvdm)
 
         # in 1D, M2 = M0 since the normal is just one.
         self.M2 = self.M0
@@ -140,23 +140,28 @@ class system:
         # **********************************************************
         # CONSTRUCT GRADIENT OF CORRECTION FUNCTION AT SOLUTION POINTS
         # compute g' of correction functions at solution points in transformed space
+        # **********************************************************
         c = 0  # Vincent constant 0 = nodal DG
-        self.gL, self.gR = vcjg(order, c, self.upts, der=True)
+        dgL, dgR = vcjg(order, c, self.upts, der=True)
         # [nfpts x nupts]
-        self.M3 = np.array([self.gL, self.gR])
+        self.M3 = np.array([dgL, dgR])
+
+        # **********************************************************
+        # CONSTRUCT GRADIENT OF SOLUTION AT FLUX POINTS
+        # **********************************************************
+        # M7 = grad lu(~xf) = V^{-1}V'(~xf)
+        # i.e. M7 * u|x=xu = u'|x=xf
+        # M7 => [nfpts x nupts]
+        # u => [nvar x nupts]
+        # u' => [nvar x nfpts]
+        dV = dVdx(self.order, np.array([-1, 1]))
+        self.M7 = np.einsum("xp, pu -> xu", dV, self.invuvdm)
 
         # compute derivative of correction functions at flux points in transformed space
-        self.gLf, _ = vcjg(order, c, np.array([-1]), der=True)
-        _, self.gRf = vcjg(order, c, np.array([1]), der=True)
+        self.dgLf, _ = vcjg(order, c, np.array([-1]), der=True)
+        _, self.dgRf = vcjg(order, c, np.array([1]), der=True)
         # [nfpts x nupts]
-        self.M6 = np.array([self.gLf, self.gRf])
-
-        # solution derivative space vandermonde at flux points
-        # [nfpts x nupts - 1]
-        # NEW FOR NSCBC
-        self.Minf = np.array(
-            [self.dppoly.vandermonde(-1)[0], self.dppoly.vandermonde(1)[0]]
-        )
+        self.M6 = np.array([self.dgLf, self.dgRf])
 
         # create integrator and state arrays
         # [nvar x nupts x neles]
@@ -185,15 +190,10 @@ class system:
 
         # allocate arrays
 
-        # solution flux points
+        # solution at flux points
         self.uf = np.zeros((nvar, nfpts, neles))
-
-        # continuous flux values
+        # continuous flux on element faces
         self.fc = np.zeros((nvar, nfpts, neles))
-
-        # solution derivative on left and right face
-        self.duL = np.zeros(nvar)
-        self.duR = np.zeros(nvar)
 
         # see if we are filtering
         self.efilt = self.config["efilt"]
@@ -631,7 +631,7 @@ class system:
         # interpolate solution to element faces
         self.uf = np.einsum("fx, vx... -> vf...", self.M0, u)
 
-    def _bc_wall(self, ul, dul, nl, side):
+    def _bc_wall(self, ul, dul, nl, side=None, **kwargs):
         # ul is the given state, need to determine exterior
         # ur, then compute the common flux
         # nl is outward normal
@@ -643,7 +643,7 @@ class system:
         else:
             return self.flux.intflux(ur, ul)
 
-    def _bc_same(self, ul, dul, nl, side):
+    def _bc_same(self, ul, dul, nl, side=None, **kwargs):
         # ul is the given state, need to determine exterior
         # ur, then compute the common flux
         ur = ul
@@ -653,7 +653,7 @@ class system:
         else:
             return self.flux.intflux(ur, ur)
 
-    def _bc_periodic(self, ul=None, dul=None, nl=None, side=None):
+    def _bc_periodic(self, ul=None, dul=None, nl=None, side=None, **kwargs):
         if side == "left":
             ul = self.uf[:, -1, -1]
             ur = self.uf[:, 0, 0]
@@ -665,13 +665,13 @@ class system:
 
         return f
 
-    def _bc_nscbc_out_p(self, ul, dul, nl, side):
+    def _bc_nscbc_out_p(self, ul, dul, nl, f, side=None, **kwargs):
         p_inf = 1.0
         sigma = 0.25
 
         # flux on face
-        f = np.zeros((self.nvar, 1))
-        p, v = self.flux.flux(ul, f)
+        ff = np.zeros(ul.shape)
+        p, v = self.flux.flux(ul, ff)
 
         rho = ul[0]
         rhov = ul[1]
@@ -710,24 +710,20 @@ class system:
         d3 = 1 / (2 * rho * c) * (L3 - L1)
 
         # now compute dudt
-        dudt = np.zeros((self.nvar, 1))
+        dudt = np.zeros(self.nvar)
         dudt[0] = -d1
         dudt[1] = -v * d1 + rho * d3
         dudt[2] = -0.5 * v**2 * d1 - d2 / (gamma - 1) + rhov * d3
 
+        # derivative of flux/correction function at face
+        # in transformed space
         if side == "left":
-            dfa = self.dfpoly.diff_coeff(self.fa[:, :, 0])
-            vdm = self.ldfvdm
-            dg = self.gLf
+            df = np.einsum("vu, fu -> vf", f, self.M7)[:, 0]
+            dg = self.dgLf
         else:
-            dfa = self.dfpoly.diff_coeff(self.fa[:, :, -1])
-            vdm = self.rdfvdm
-            dg = self.gRf
-            pass
-        df = np.zeros((self.nvar, 1))
-        # derivative of flux at face
-        self.dfpoly.evaluate(df, vdm, dfa)
-        fc = (-1.0 / invJac * dudt - df + f * dg) / dg
+            df = np.einsum("vu, fu -> vf", f, self.M7)[:, -1]
+            dg = self.dgRf
+        fc = (-1.0 / invJac * dudt - df + ff * dg) / dg
 
         return fc
 
@@ -775,33 +771,34 @@ class system:
             self.uf[:, -1, 0:-1], self.uf[:, 0, 1::]
         )
 
-        # # compute solution derivative (w.r.t comp coords) on left and right faces
-        # duaL = self.dppoly.diff_coeff(self.ua[:, 0])
-        # self.dppoly.evaluate(self.duL, self.ldfvdm, duaL)
-        # duaR = self.dppoly.diff_coeff(self.ua[:, -1])
-        # self.dppoly.evaluate(self.duR, self.rdfvdm, duaR)
+        # compute solution derivative (w.r.t comp coords) on left and right faces
+        du = np.einsum("vu...,fu->vf...", u, self.M7)
 
         # compute common flux on boundary
-        self.fc[:, 0, 0] = self.bcl(self.uf[:, 0, 0], self.duL, -1, "left")
-        self.fc[:, -1, -1] = self.bcr(self.uf[:, -1, -1], self.duR, 1, "right")
+        self.fc[:, 0, 0] = self.bcl(
+            self.uf[:, 0, 0], du[:, 0, 0], -1, f=f[:, :, 0], side="left"
+        )
+        self.fc[:, -1, -1] = self.bcr(
+            self.uf[:, -1, -1], du[:, -1, -1], 1, f=f[:, :, -1], side="right"
+        )
 
         # Begin building of negdivconf, use fluxout bank
         negdivconf = getattr(self, f"u{fbankout}")
 
         # evaluate discontinuous flux at flux points
         # M2*f
-        # self.ff[:] = np.einsum("ux...,vx...->vu...", self.M2, f)
+        # self.ff[:] = np.einsum("ux,vx...->vu...", self.M2, f)
         # compute flux derivative at solution points
         # M1*f
-        # negdivconf[:] = np.einsum("ux...,vx...->vu...", self.M1, f)
+        # negdivconf[:] = np.einsum("ux,vx...->vu...", self.M1, f)
 
         # add the left/right jumps to negdivconf
         # M3*(fc - M2*f)
-        # negdivconf += np.einsum("vf...,fx...->vx...", self.fc - self.ff, self.M3)
+        # negdivconf += np.einsum("vf...,fx->vx...", self.fc - self.ff, self.M3)
 
         # R = M3*fc + (M1 - M3*M2)*f
-        negdivconf[:] = np.einsum("vf...,fx...->vx...", self.fc, self.M3) + np.einsum(
-            "ux...,vx...->vu...",
+        negdivconf[:] = np.einsum("vf..., fx -> vx...", self.fc, self.M3) + np.einsum(
+            "ux, vx... -> vu...",
             self.M1 - np.einsum("ij, ik -> jk", self.M3, self.M2),
             f,
         )
@@ -861,11 +858,11 @@ if __name__ == "__main__":
         "intg": "rk4",
         "intflux": "rusanov",
         "gamma": 1.4,
-        "nout": 0,
-        "bcl": "periodic",
-        "bcr": "periodic",
+        "nout": 50,
+        "bcl": "same",
+        "bcr": "nscbc_out_p",
         "mesh": "mesh-50.npy",
-        "outfname": None,
+        "outfname": "test",
         "efilt": None,
         "efniter": 20,
     }
@@ -882,16 +879,16 @@ if __name__ == "__main__":
     # p = (1.4 - 1.0) * (rhoE - 0.5 * rho * v**2)
 
     # sin
-    rho = 2 + np.sin(2 * np.pi * x)
-    v = 1.0
-    p = 1.0
+    # rho = 2 + np.sin(2 * np.pi * x)
+    # v = 1.0
+    # p = 1.0
 
     # wave
-    # center = 0.5
-    # height = 0.25
-    # rho = 1.0
-    # v = 0  # 1 + height * np.exp(-((x - center) ** 2) / (2 * 0.05**2))
-    # p = 1 + height * np.exp(-((x - center) ** 2) / (2 * 0.05**2))
+    center = 0.75
+    height = 0.25
+    rho = 1.0
+    v = 1 + height * np.exp(-((x - center) ** 2) / (2 * 0.05**2))
+    p = 1 + height * np.exp(-((x - center) ** 2) / (2 * 0.05**2))
 
     # compute CFL = 0.1
     CFL = 0.1
@@ -900,7 +897,7 @@ if __name__ == "__main__":
     c = np.sqrt(gamma * np.max(p) / np.min(rho)) + np.max(np.abs(v))
     dt = CFL * dx / c
     config["dt"] = dt
-    config["tend"] = 5.0
+    config["tend"] = 4.0
 
     a.set_ics([rho, v, p])
     a.run()
