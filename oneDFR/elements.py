@@ -7,7 +7,7 @@ from pathlib import Path
 from oneDFR.output import plot
 
 np.seterr(all="raise")
-fpdtype_max = 1e10  # np.finfo(np.float64).max
+fpdtype_max = np.finfo(np.float64).max
 fpdtype_min = np.finfo(np.float64).eps
 
 
@@ -145,18 +145,18 @@ class system:
         # [nfpts x nupts]
         self.M3 = np.array([self.gL, self.gR])
 
+        # compute derivative of correction functions at flux points in transformed space
+        self.gLf, _ = vcjg(order, c, np.array([-1]), der=True)
+        _, self.gRf = vcjg(order, c, np.array([1]), der=True)
+        # [nfpts x nupts]
+        self.M6 = np.array([self.gLf, self.gRf])
+
         # solution derivative space vandermonde at flux points
         # [nfpts x nupts - 1]
         # NEW FOR NSCBC
         self.Minf = np.array(
             [self.dppoly.vandermonde(-1)[0], self.dppoly.vandermonde(1)[0]]
         )
-
-        # compute derivative of correction functions at flux points in transformed space
-        self.gLf, _ = vcjg(order, c, np.array([-1]), der=True)
-        _, self.gRf = vcjg(order, c, np.array([1]), der=True)
-        # [nfpts x nupts]
-        self.M6 = np.array([self.gLf, self.gRf])
 
         # create integrator and state arrays
         # [nvar x nupts x neles]
@@ -184,18 +184,12 @@ class system:
         self.flux = subclass_where(BaseFlux, name=config["intflux"])(config)
 
         # allocate arrays
-        # solution modes
-        self.ua = np.zeros((nvar, nupts, neles))
 
         # solution flux points
         self.uf = np.zeros((nvar, nfpts, neles))
 
         # continuous flux values
         self.fc = np.zeros((nvar, nfpts, neles))
-
-        # flux polyl @ Xi=-1
-        # flux polyl @ Xi=1
-        self.ff = np.zeros((nvar, nfpts, neles))
 
         # solution derivative on left and right face
         self.duL = np.zeros(nvar)
@@ -439,7 +433,8 @@ class system:
         # assumes entmin_int is already populated
         u = getattr(self, f"u{ubank}")
         # compute solution poly'l modes
-        self.ppoly.compute_coeff(self.ua, u, self.invuvdm)
+        ua = np.zeros((self.nvar, self.nupts, self.neles))
+        self.ppoly.compute_coeff(ua, u, self.invuvdm)
 
         try:
             d_min = self.config["d_min"]
@@ -462,7 +457,7 @@ class system:
         entmin = np.min(self.entmin_int, axis=0)
 
         # compute rho, p, e for all elements
-        dmin, pmin, emin, Xmin = self.get_minima(u, self.ua, entmin)
+        dmin, pmin, emin, Xmin = self.get_minima(u, ua, entmin)
 
         filtidx = np.where(
             np.bitwise_or(
@@ -475,7 +470,7 @@ class system:
         )[0]
 
         for idx in filtidx:
-            umodes = self.ua[:, :, idx : idx + 1]
+            umodes = ua[:, :, idx : idx + 1]
             unew = np.copy(u[:, :, idx : idx + 1])
 
             f = 1.0
@@ -518,7 +513,7 @@ class system:
 
                     f = flow
 
-            umodes = self.ua[:, :, idx : idx + 1]
+            umodes = ua[:, :, idx : idx + 1]
             ## Filter entire solution with flow
             self.filter_full(np.copy(umodes), unew, f)
 
@@ -526,17 +521,18 @@ class system:
             u[:, :, idx : idx + 1] = unew
 
             # update modes
-            self.upoly.compute_coeff(self.ua[:, :, idx : idx + 1], unew, self.invuvdm)
+            self.upoly.compute_coeff(ua[:, :, idx : idx + 1], unew, self.invuvdm)
 
         # update all min interface entropy
-        _, _, emin, _ = self.get_minima(u, self.ua, entmin)
+        _, _, emin, _ = self.get_minima(u, ua, entmin)
         self.entmin_int[:] = emin
 
     def _entropy_filter_linearise(self, ubank):
         # assumes entmin_int is already populated
         u = getattr(self, f"u{ubank}")
         # compute solution poly'l modes
-        self.ppoly.compute_coeff(self.ua, u, self.invuvdm)
+        ua = np.zeros((self.nvar, self.nupts, self.neles))
+        self.ppoly.compute_coeff(ua, u, self.invuvdm)
 
         try:
             d_min = self.config["d_min"]
@@ -555,7 +551,7 @@ class system:
         entmin = np.min(self.entmin_int, axis=0)
 
         # compute rho, p, e for all elements
-        dmin, pmin, _, Xmin = self.get_minima(u, self.ua, entmin)
+        dmin, pmin, _, Xmin = self.get_minima(u, ua, entmin)
 
         filtidx = np.where(
             np.bitwise_or(
@@ -570,7 +566,7 @@ class system:
         for idx in filtidx:
             nupts = self.nupts
             invuvdm = self.invuvdm
-            umodes = self.ua[:, :, idx : idx + 1]
+            umodes = ua[:, :, idx : idx + 1]
 
             if self.fpts_in_upts:
                 ui = np.copy(u[:, :, idx : idx + 1])
@@ -619,10 +615,10 @@ class system:
             u[:, :, idx : idx + 1] = ui[:, 0:nupts, :]
 
             # update modes
-            self.ua[:, :, idx : idx + 1] = umodes
+            ua[:, :, idx : idx + 1] = umodes
 
         # update all min interface entropy
-        _, _, emin, _ = self.get_minima(u, self.ua, entmin)
+        _, _, emin, _ = self.get_minima(u, ua, entmin)
         self.entmin_int[:] = emin
 
     def _u_to_f_closed(self, ubank):
@@ -632,7 +628,6 @@ class system:
 
     def _u_to_f_open(self, ubank):
         u = getattr(self, f"u{ubank}")
-        # REMEMBER, RIGHT interface is LEFT side of element
         # interpolate solution to element faces
         self.uf = np.einsum("fx, vx... -> vf...", self.M0, u)
 
@@ -643,26 +638,20 @@ class system:
         ur = ul
         ur[1] = -ul[1]
 
-        f = np.empty((self.nvar, 1))
         if side == "left":
-            self.flux.intflux(ul, ur, f)
+            return self.flux.intflux(ul, ur)
         else:
-            self.flux.intflux(ur, ul, f)
-
-        return f
+            return self.flux.intflux(ur, ul)
 
     def _bc_same(self, ul, dul, nl, side):
         # ul is the given state, need to determine exterior
         # ur, then compute the common flux
         ur = ul
 
-        f = np.empty((self.nvar, 1))
         if side == "left":
-            self.flux.intflux(ul, ur, f)
+            return self.flux.intflux(ul, ur)
         else:
-            self.flux.intflux(ur, ul, f)
-
-        return f
+            return self.flux.intflux(ur, ur)
 
     def _bc_periodic(self, ul=None, dul=None, nl=None, side=None):
         if side == "left":
@@ -714,72 +703,6 @@ class system:
         L1 = lam1 * (dp - rho * c * dv)
         L2 = lam2 * (c**2 * drho - dp)
         L3 = K * (p - p_inf)
-
-        # now we can compute d
-        d1 = 1 / c**2 * (L2 + 0.5 * (L3 + L1))
-        d2 = 1 / 2 * (L3 + L1)
-        d3 = 1 / (2 * rho * c) * (L3 - L1)
-
-        # now compute dudt
-        dudt = np.zeros((self.nvar, 1))
-        dudt[0] = -d1
-        dudt[1] = -v * d1 + rho * d3
-        dudt[2] = -0.5 * v**2 * d1 - d2 / (gamma - 1) + rhov * d3
-
-        if side == "left":
-            dfa = self.dfpoly.diff_coeff(self.fa[:, :, 0])
-            vdm = self.ldfvdm
-            dg = self.gLf
-        else:
-            dfa = self.dfpoly.diff_coeff(self.fa[:, :, -1])
-            vdm = self.rdfvdm
-            dg = self.gRf
-            pass
-        df = np.zeros((self.nvar, 1))
-        # derivative of flux at face
-        self.dfpoly.evaluate(df, vdm, dfa)
-        fc = (-1.0 / invJac * dudt - df + f * dg) / dg
-
-        return fc
-
-    def _bc_nscbc_in_u(self, ul, dul, nl, side):
-        v_inf = 0.0
-        sigma = 0.25
-
-        # flux on face
-        f = np.zeros((self.nvar, 1))
-        p, v = self.flux.flux(ul, f)
-
-        rho = ul[0]
-        rhov = ul[1]
-        rhoE = ul[2]
-
-        if side == "left":
-            invJac = self.invJac[0]
-        else:
-            invJac = self.invJac[-1]
-
-        drho = dul[0] * invJac
-        drhov = dul[1] * invJac
-        drhoE = dul[2] * invJac
-
-        gamma = self.config["gamma"]
-        c = np.sqrt(self.config["gamma"] * p / rho)
-
-        K = sigma * c * (1 - (v / c) ** 2) / 1.0
-
-        # spatial derivative (physical)
-        dp = (gamma - 1.0) * (drhoE - 0.5 * drho * v**2 - rhov * drhov)
-        dv = (drhov - drho * v) / rho
-
-        # wave amplitude velocities
-        lam1 = v - c
-        lam2 = v
-        lam3 = v + c
-
-        L1 = K * (v - v_inf)
-        L2 = 0.0
-        L3 = lam1 * (dp + rho * c * dv)
 
         # now we can compute d
         d1 = 1 / c**2 * (L2 + 0.5 * (L3 + L1))
@@ -863,17 +786,26 @@ class system:
         self.fc[:, 0, 0] = self.bcl(self.uf[:, 0, 0], self.duL, -1, "left")
         self.fc[:, -1, -1] = self.bcr(self.uf[:, -1, -1], self.duR, 1, "right")
 
-        # evaluate discontinuous flux at flux points
-        self.ff[:] = np.einsum("ux...,vx...->vu...", self.M2, f)
-
-        # Begin building of negdivconf
+        # Begin building of negdivconf, use fluxout bank
         negdivconf = getattr(self, f"u{fbankout}")
 
+        # evaluate discontinuous flux at flux points
+        # M2*f
+        # self.ff[:] = np.einsum("ux...,vx...->vu...", self.M2, f)
         # compute flux derivative at solution points
-        negdivconf[:] = np.einsum("ux...,vx...->vu...", self.M1, f)
+        # M1*f
+        # negdivconf[:] = np.einsum("ux...,vx...->vu...", self.M1, f)
 
         # add the left/right jumps to negdivconf
-        negdivconf += np.einsum("vf...,fx...->vx...", self.fc - self.ff, self.M3)
+        # M3*(fc - M2*f)
+        # negdivconf += np.einsum("vf...,fx...->vx...", self.fc - self.ff, self.M3)
+
+        # R = M3*fc + (M1 - M3*M2)*f
+        negdivconf[:] = np.einsum("vf...,fx...->vx...", self.fc, self.M3) + np.einsum(
+            "ux...,vx...->vu...",
+            self.M1 - np.einsum("ij, ik -> jk", self.M3, self.M2),
+            f,
+        )
 
         # transform to neg flux in physical coords
         negdivconf *= -self.invJac
