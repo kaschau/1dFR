@@ -758,8 +758,6 @@ class system:
         u = getattr(self, f"u{ubankin}")
         f = getattr(self, f"u{fbankout}")
 
-        self.entropy_filter(ubankin)
-
         # interpolate solution to face
         self.u_to_f(ubankin)
 
@@ -767,6 +765,7 @@ class system:
         self.intcent()
         self.bcentl(self.uf[:, 0, 0], "left")
         self.bcentr(self.uf[:, -1, -1], "right")
+        self.entropy_filter(ubankin)
 
         # compute pointwise fluxes at solution points
         self.flux.flux(u, f)
