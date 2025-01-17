@@ -665,64 +665,6 @@ class system:
         return f
 
     def _bc_nscbc_out_p(self, ul, dul, nl, elef, side=None, **kwargs):
-        sigma = 0.25
-
-        gamma = self.config["gamma"]
-        # flux on face
-        ff = np.zeros(ul.shape)
-        p, v = self.flux.flux(ul, ff)
-
-        rho = ul[0]
-        rhov = ul[1]
-        rhoE = ul[2]
-
-        if side == "left":
-            invJac = self.invJac[0]
-            Ex = self.Ex[0]
-        else:
-            invJac = self.invJac[-1]
-            Ex = self.Ex[-1]
-
-        # convert derivatives to physical space
-        drho = dul[0] * Ex
-        drhov = dul[1] * Ex
-        drhoE = dul[2] * Ex
-
-        # spatial derivative of primitives (physical)
-        dp = (gamma - 1.0) * (drhoE - 0.5 * drho * v**2 - rhov * drhov)
-        dv = (drhov - drho * v) / rho
-
-        c = np.sqrt(self.config["gamma"] * p / rho)
-
-        # transform velocity, sos
-        Extil = Ex / np.sqrt(Ex**2)
-        V = v * Ex * nl
-        C = c * np.sqrt(Ex**2)
-
-        # Compute wave amplitude speeds
-        nx = nl
-        L1 = V * (nx * drho - nx / c**2 * dp) / Ex
-        L4 = 1.0 / np.sqrt(2) * (V + C) * (nx * dv + 1 / (rho * c) * dp) / Ex
-        # Must guess wave entering domain
-        L5 = (
-            (1 / invJac)
-            * (sigma / (np.sqrt(2) * rho))
-            * (1 - (abs(v) / c) ** 2)
-            / 1.0
-            * (p - p_inf)
-        )
-
-        # now we can compute d
-        d1 = nx * L1 + rho / (np.sqrt(2) * c) * (L4 + L5)
-        d2 = nx / np.sqrt(2) * (L4 - L5)
-        d5 = rho / np.sqrt(2) * c * (L4 + L5)
-
-        # now compute dudt
-        dudt = np.zeros(self.nvar)
-        dudt[0] = d1
-        dudt[1] = v * d1 + rho * d2
-        dudt[2] = 0.5 * v**2 * d1 + rhov * d2 + d5 / (gamma - 1)
-
         # derivative of flux/correction function at face
         # in transformed space
         if side == "left":
@@ -731,7 +673,100 @@ class system:
         else:
             df = np.einsum("vu, fu -> vf", elef, self.M7)[:, -1]
             dg = self.dgRf
-        fc = (1.0 / invJac * dudt - df + ff * dg) / dg
+
+        sigma = 0.01
+
+        gamma = self.config["gamma"]
+        # flux on face
+        ff = np.zeros(ul.shape)
+        p, v = self.flux.flux(ul, ff)
+
+        if side == "left":
+            invJac = self.invJac[0]
+            Ex = self.Ex[0]
+        else:
+            invJac = self.invJac[-1]
+            Ex = self.Ex[-1]
+        Jac = 1 / invJac
+
+        rho = ul[0]
+        rhov = ul[1]
+        rhoE = ul[2]
+        c = np.sqrt(self.config["gamma"] * p / rho)
+
+        # First step is to construct L from df (derivative of flux in transformed space
+        # normal to face)
+        Extil = Ex / np.sqrt(Ex**2) * nl
+
+        # Create P matrix
+        P = np.array(
+            [
+                [Extil, rho / (2 * c), rho / (2 * c)],
+                [
+                    v * Extil,
+                    rho / (2 * c) * (v + Extil * c),
+                    rho / (2 * c) * (v - Extil * c),
+                ],
+                [
+                    v**2 / 2 * Extil + rho * v * Extil,
+                    rho / (2 * c) * (v**2 / 2 + c**2 / (gamma - 1) + v * c * Extil),
+                    rho / (2 * c) * (v**2 / 2 + c**2 / (gamma - 1) - v * c * Extil),
+                ],
+            ],
+        )
+
+        PQ = np.array(
+            [
+                [Extil, 0, -Extil / c**2],
+                [0, Extil / np.sqrt(2), 1 / (np.sqrt(2) * rho * c)],
+                [0, -Extil / np.sqrt(2), 1 / (np.sqrt(2) * rho * c)],
+            ]
+        )
+        QU = np.array(
+            [
+                [1, 0, 0],
+                [-v / rho, 1 / rho, 0],
+                [v**2 / 2 * (gamma - 1), -(gamma - 1) * v, (gamma - 1)],
+            ]
+        )
+        P2 = PQ @ QU
+
+        # Compute wave amplitude speeds
+        drho = dul[0]
+        drhov = dul[1]
+        drhoE = dul[2]
+
+        # spatial derivative of primitives
+        dp = (gamma - 1.0) * (drhoE - 0.5 * drho * v**2 - rhov * drhov)
+        dv = (drhov - drho * v) / rho
+
+        dfde = np.zeros(3)
+        dfde[0] = rho * dv + v * drho
+        dfde[1] = dfde[0] + dp
+        dfde[2] = v * drhoE + rhoE * dv + v * dp + p * dv
+
+        L = Jac * np.linalg.inv(P) @ dfde
+
+        L1 = L[0]
+        L4 = L[1]
+        # Must guess wave entering domain
+        K = sigma * (1 - (abs(v) / c) ** 2)
+        # TODO do we need Jac?
+        # L5 = K * (p - p_inf)
+        L5 = (
+            Jac
+            * (sigma / (np.sqrt(2) * rho))
+            * (1 - (abs(v) / c) ** 2)
+            / 1.0
+            * (p - p_inf)
+        )
+
+        Lstar = np.array([L1, L4, L5])
+
+        # now compute modified normal flux derivative in transformed space
+        dEde_star = invJac * P @ Lstar
+
+        fc = (dEde_star - df + ff * dg) / dg
 
         return fc
 
@@ -864,7 +899,7 @@ class system:
 
 if __name__ == "__main__":
     config = {
-        "p": 3,
+        "p": 2,
         "quad": "gauss-legendre",
         "intg": "rk4",
         "intflux": "rusanov",
@@ -895,7 +930,7 @@ if __name__ == "__main__":
     # p = 1.0
 
     # wave
-    center = 0.50
+    center = 0.750
     height = 0.25
     u_inf = 1.0
     p_inf = 1.0
