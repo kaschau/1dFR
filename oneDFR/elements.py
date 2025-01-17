@@ -664,7 +664,7 @@ class system:
 
         return f
 
-    def _bc_nscbc_out_p(self, ul, dul, nl, f, side=None, **kwargs):
+    def _bc_nscbc_out_p(self, ul, dul, nl, elef, side=None, **kwargs):
         sigma = 0.25
 
         gamma = self.config["gamma"]
@@ -695,6 +695,7 @@ class system:
         c = np.sqrt(self.config["gamma"] * p / rho)
 
         # transform velocity, sos
+        Extil = Ex / np.sqrt(Ex**2)
         V = v * Ex * nl
         C = c * np.sqrt(Ex**2)
 
@@ -702,7 +703,7 @@ class system:
         nx = nl
         L1 = V * (nx * drho - nx / c**2 * dp) / Ex
         L4 = 1.0 / np.sqrt(2) * (V + C) * (nx * dv + 1 / (rho * c) * dp) / Ex
-        # L5 = 1.0 / np.sqrt(2) * (V - C) * (-nx * dv + 1 / (rho * c) * dp) / Ex
+        # Must guess wave entering domain
         L5 = (
             (1 / invJac)
             * (sigma / (np.sqrt(2) * rho))
@@ -725,74 +726,10 @@ class system:
         # derivative of flux/correction function at face
         # in transformed space
         if side == "left":
-            df = np.einsum("vu, fu -> vf", f, self.M7)[:, 0]
+            df = np.einsum("vu, fu -> vf", elef, self.M7)[:, 0]
             dg = self.dgLf
         else:
-            df = np.einsum("vu, fu -> vf", f, self.M7)[:, -1]
-            dg = self.dgRf
-        fc = (1.0 / invJac * dudt - df + ff * dg) / dg
-
-        return fc
-
-    def _bc_nscbc_in_up(self, ul, dul, nl, f, side=None, **kwargs):
-        sigma = 0.25
-
-        gamma = self.config["gamma"]
-        # flux on face
-        ff = np.zeros(ul.shape)
-        p, v = self.flux.flux(ul, ff)
-
-        rho = ul[0]
-        rhov = ul[1]
-        rhoE = ul[2]
-
-        if side == "left":
-            invJac = self.invJac[0]
-            Ex = self.Ex[0]
-        else:
-            invJac = self.invJac[-1]
-            Ex = self.Ex[-1]
-
-        # convert derivatives to physical space
-        drho = dul[0] * Ex
-        drhov = dul[1] * Ex
-        drhoE = dul[2] * Ex
-
-        # spatial derivative of primitives (physical)
-        dp = (gamma - 1.0) * (drhoE - 0.5 * drho * v**2 - rhov * drhov)
-        dv = (drhov - drho * v) / rho
-
-        c = np.sqrt(self.config["gamma"] * p / rho)
-
-        # transform velocity, sos
-        V = v * Ex
-        C = c * np.sqrt(Ex**2)
-
-        # Compute wave amplitude speeds
-        nx = -nl
-        L5 = 1.0 / np.sqrt(2) * (V - C) * (-nx * dv + 1 / (rho * c) * dp) / Ex
-        L4 = L5 + nx * np.sqrt(2) * sigma * invJac * (v - u_inf)
-        T = p / (cv_inf * (self.config["gamma"] - 1))
-        L1 = nx * ((rho / np.sqrt(2) * c) * (L4 + L5) - sigma * invJac * (T - T_inf))
-
-        # now we can compute d
-        d1 = nx * L1 + rho / (np.sqrt(2) * c) * (L4 + L5)
-        d2 = nx / np.sqrt(2) * (L4 - L5)
-        d5 = rho / np.sqrt(2) * c * (L4 + L5)
-
-        # now compute dudt
-        dudt = np.zeros(self.nvar)
-        dudt[0] = d1
-        dudt[1] = v * d1 + rho * d2
-        dudt[2] = 0.5 * v**2 * d1 + rhov * d2 + d5 / (gamma - 1)
-
-        # derivative of flux/correction function at face
-        # in transformed space
-        if side == "left":
-            df = np.einsum("vu, fu -> vf", f, self.M7)[:, 0]
-            dg = self.dgLf
-        else:
-            df = np.einsum("vu, fu -> vf", f, self.M7)[:, -1]
+            df = np.einsum("vu, fu -> vf", elef, self.M7)[:, -1]
             dg = self.dgRf
         fc = (1.0 / invJac * dudt - df + ff * dg) / dg
 
@@ -847,10 +784,10 @@ class system:
 
         # compute common flux on boundary
         self.fc[:, 0, 0] = self.bcl(
-            self.uf[:, 0, 0], du[:, 0, 0], -1, f=f[:, :, 0], side="left"
+            self.uf[:, 0, 0], du[:, 0, 0], -1, elef=f[:, :, 0], side="left"
         )
         self.fc[:, -1, -1] = self.bcr(
-            self.uf[:, -1, -1], du[:, -1, -1], 1, f=f[:, :, -1], side="right"
+            self.uf[:, -1, -1], du[:, -1, -1], 1, elef=f[:, :, -1], side="right"
         )
 
         # Begin building of negdivconf, use fluxout bank
@@ -933,7 +870,7 @@ if __name__ == "__main__":
         "intflux": "rusanov",
         "gamma": 1.4,
         "nout": 50,
-        "bcl": "nscbc_in_up",
+        "bcl": "same",
         "bcr": "nscbc_out_p",
         "mesh": "mesh-50.npy",
         "outfname": "test",
@@ -958,15 +895,13 @@ if __name__ == "__main__":
     # p = 1.0
 
     # wave
-    center = 0.2
+    center = 0.50
     height = 0.25
     u_inf = 1.0
     p_inf = 1.0
-    cv_inf = 100
-    T_inf = p_inf / (cv_inf * (a.config["gamma"] - 1))
 
     rho = 1.0
-    v = u_inf + height * np.exp(-((x - center) ** 2) / (2 * 0.05**2))
+    v = u_inf + np.sign(u_inf) * height * np.exp(-((x - center) ** 2) / (2 * 0.05**2))
     p = p_inf + height * np.exp(-((x - center) ** 2) / (2 * 0.05**2))
 
     # compute CFL = 0.1
