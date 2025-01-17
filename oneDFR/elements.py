@@ -674,7 +674,7 @@ class system:
             df = np.einsum("vu, fu -> vf", elef, self.M7)[:, -1]
             dg = self.dgRf
 
-        sigma = 0.01
+        sigma = 0.25
 
         gamma = self.config["gamma"]
         # flux on face
@@ -715,58 +715,19 @@ class system:
             ],
         )
 
-        PQ = np.array(
-            [
-                [Extil, 0, -Extil / c**2],
-                [0, Extil / np.sqrt(2), 1 / (np.sqrt(2) * rho * c)],
-                [0, -Extil / np.sqrt(2), 1 / (np.sqrt(2) * rho * c)],
-            ]
-        )
-        QU = np.array(
-            [
-                [1, 0, 0],
-                [-v / rho, 1 / rho, 0],
-                [v**2 / 2 * (gamma - 1), -(gamma - 1) * v, (gamma - 1)],
-            ]
-        )
-        P2 = PQ @ QU
-
-        # Compute wave amplitude speeds
-        drho = dul[0]
-        drhov = dul[1]
-        drhoE = dul[2]
-
-        # spatial derivative of primitives
-        dp = (gamma - 1.0) * (drhoE - 0.5 * drho * v**2 - rhov * drhov)
-        dv = (drhov - drho * v) / rho
-
-        dfde = np.zeros(3)
-        dfde[0] = rho * dv + v * drho
-        dfde[1] = dfde[0] + dp
-        dfde[2] = v * drhoE + rhoE * dv + v * dp + p * dv
-
-        L = Jac * np.linalg.inv(P) @ dfde
+        L = Jac * np.linalg.inv(P) @ df
 
         L1 = L[0]
         L4 = L[1]
         # Must guess wave entering domain
-        K = sigma * (1 - (abs(v) / c) ** 2)
-        # TODO do we need Jac?
-        # L5 = K * (p - p_inf)
-        L5 = (
-            Jac
-            * (sigma / (np.sqrt(2) * rho))
-            * (1 - (abs(v) / c) ** 2)
-            / 1.0
-            * (p - p_inf)
-        )
+        L5 = Jac * (sigma / rho) * (1 - (abs(v) / c) ** 2) / 1.0 * (p - p_inf)
 
         Lstar = np.array([L1, L4, L5])
 
         # now compute modified normal flux derivative in transformed space
         dEde_star = invJac * P @ Lstar
 
-        fc = (dEde_star - df + ff * dg) / dg
+        fc = (Jac * dEde_star - df + ff * dg) / dg
 
         return fc
 
