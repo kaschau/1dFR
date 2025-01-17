@@ -87,8 +87,6 @@ class system:
 
         # solution space polynomial
         self.ppoly = LegendrePoly(order)
-        # derivative space polynomial
-        self.dppoly = LegendrePoly(order - 1)
 
         # get solution points in transformed space
         self.upts = get_quad_rules(config)
@@ -125,7 +123,7 @@ class system:
         # CONSTRUCT GRADIENT of NODAL BASIS SET OPERATOR
         # M1 = grad lu(~xu) = V^{-1}V'(~xu)
         # An operator to compute the derivative of the function at solution
-        # points
+        # pointsnsformed coordinates
         # i.e. M1 * f|x=xu = f'|x=xu
         # M1 => [nupts x nupts]
         # f => [nvar x nupts]
@@ -139,7 +137,8 @@ class system:
 
         # **********************************************************
         # CONSTRUCT GRADIENT OF CORRECTION FUNCTION AT SOLUTION POINTS
-        # compute g' of correction functions at solution points in transformed space
+        # compute g' of correction functions at solution points
+        # in transformed space w.r.t transformed coordinates
         # **********************************************************
         c = 0  # Vincent constant 0 = nodal DG
         dgL, dgR = vcjg(order, c, self.upts, der=True)
@@ -669,6 +668,7 @@ class system:
         p_inf = 1.0
         sigma = 0.25
 
+        gamma = self.config["gamma"]
         # flux on face
         ff = np.zeros(ul.shape)
         p, v = self.flux.flux(ul, ff)
@@ -679,41 +679,49 @@ class system:
 
         if side == "left":
             invJac = self.invJac[0]
+            Ex = self.Ex[0]
         else:
             invJac = self.invJac[-1]
+            Ex = self.Ex[-1]
 
-        drho = dul[0] * invJac
-        drhov = dul[1] * invJac
-        drhoE = dul[2] * invJac
+        # convert derivatives to physical space
+        drho = dul[0] * Ex
+        drhov = dul[1] * Ex
+        drhoE = dul[2] * Ex
 
-        gamma = self.config["gamma"]
-        c = np.sqrt(self.config["gamma"] * p / rho)
-
-        K = sigma * c * (1 - (v / c) ** 2) / 1.0
-
-        # spatial derivative (physical)
+        # spatial derivative of primitives (physical)
         dp = (gamma - 1.0) * (drhoE - 0.5 * drho * v**2 - rhov * drhov)
         dv = (drhov - drho * v) / rho
 
-        # wave amplitude velocities
-        lam1 = v - c
-        lam2 = v
-        lam3 = v + c
+        c = np.sqrt(self.config["gamma"] * p / rho)
 
-        L1 = lam1 * (dp - rho * c * dv)
-        L2 = lam2 * (c**2 * drho - dp)
-        L3 = K * (p - p_inf)
+        # transform velocity, sos
+        V = v * Ex * nl
+        C = c * np.sqrt(Ex**2)
+
+        # Compute wave amplitude speeds
+        nx = nl
+        L1 = V * (nx * drho - nx / c**2 * dp) / Ex
+        L4 = 1.0 / np.sqrt(2) * (V + C) * (nx * dv + 1 / (rho * c) * dp) / Ex
+        # L5 = 1.0 / np.sqrt(2) * (V - C) * (-nx * dv + 1 / (rho * c) * dp) / Ex
+        L5 = (
+            (1 / invJac)
+            * (sigma / (np.sqrt(2) * rho))
+            * (1 - (abs(v) / c) ** 2)
+            / 1.0
+            * (p - p_inf)
+        )
 
         # now we can compute d
-        d1 = 1 / c**2 * (L2 + 0.5 * (L3 + L1))
-        d2 = 1 / 2 * (L3 + L1)
-        d3 = 1 / (2 * rho * c) * (L3 - L1)
+        d1 = nx * L1 + rho / (np.sqrt(2) * c) * (L4 + L5)
+        d2 = nx / np.sqrt(2) * (L4 - L5)
+        d5 = rho / np.sqrt(2) * c * (L4 + L5)
 
         # now compute dudt
         dudt = np.zeros(self.nvar)
-        dudt[0] = -d1
-        dudt[1] = -v * d1 + rho * d3
-        dudt[2] = -0.5 * v**2 * d1 - d2 / (gamma - 1) + rhov * d3
+        dudt[0] = d1
+        dudt[1] = v * d1 + rho * d2
+        dudt[2] = 0.5 * v**2 * d1 + rhov * d2 + d5 / (gamma - 1)
 
         # derivative of flux/correction function at face
         # in transformed space
@@ -723,7 +731,7 @@ class system:
         else:
             df = np.einsum("vu, fu -> vf", f, self.M7)[:, -1]
             dg = self.dgRf
-        fc = (-1.0 / invJac * dudt - df + ff * dg) / dg
+        fc = (1.0 / invJac * dudt - df + ff * dg) / dg
 
         return fc
 
@@ -815,6 +823,9 @@ class system:
             "i,j->ij", self.upts, h / 2.0
         )
         self.invJac = 2.0 / h
+        # "metrics"
+        self.Xe = h / 2.0
+        self.Ex = self.invJac
         self.neles = np.shape(eles)[0]
 
     def set_ics(self, pris):
@@ -853,14 +864,14 @@ class system:
 
 if __name__ == "__main__":
     config = {
-        "p": 2,
+        "p": 3,
         "quad": "gauss-legendre",
         "intg": "rk4",
         "intflux": "rusanov",
         "gamma": 1.4,
         "nout": 50,
-        "bcl": "same",
-        "bcr": "nscbc_out_p",
+        "bcr": "same",
+        "bcl": "nscbc_out_p",
         "mesh": "mesh-50.npy",
         "outfname": "test",
         "efilt": None,
@@ -884,7 +895,7 @@ if __name__ == "__main__":
     # p = 1.0
 
     # wave
-    center = 0.75
+    center = 0.25
     height = 0.25
     rho = 1.0
     v = 1 + height * np.exp(-((x - center) ** 2) / (2 * 0.05**2))
@@ -897,7 +908,7 @@ if __name__ == "__main__":
     c = np.sqrt(gamma * np.max(p) / np.min(rho)) + np.max(np.abs(v))
     dt = CFL * dx / c
     config["dt"] = dt
-    config["tend"] = 4.0
+    config["tend"] = 1.5
 
     a.set_ics([rho, v, p])
     a.run()
