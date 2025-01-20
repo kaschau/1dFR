@@ -696,7 +696,7 @@ class system:
 
         # First step is to construct L from df (derivative of flux in transformed space
         # normal to face)
-        Extil = Ex / np.sqrt(Ex**2) * nl
+        Extil = Ex / np.sqrt(Ex**2)
 
         # Create P matrix
         P = np.array(
