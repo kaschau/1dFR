@@ -670,13 +670,19 @@ class system:
         if side == "left":
             df = np.einsum("vu, fu -> vf", elef, self.M7)[:, 0]
             dg = self.dgLlf
-            ff = elef[:, 0]
+            if self.fpts_in_upts:
+                ff = elef[:, 0]
+            else:
+                ff = np.einsum("ux,vx...->vu...", self.M2, elef)[:, 0]
             fother = elef[:, -1]
             dgother = self.dgRlf
         else:
             df = np.einsum("vu, fu -> vf", elef, self.M7)[:, -1]
             dg = self.dgRrf
-            ff = elef[:, -1]
+            if self.fpts_in_upts:
+                ff = elef[:, -1]
+            else:
+                ff = np.einsum("ux,vx...->vu...", self.M2, elef)[:, -1]
             fother = elef[:, 0]
             dgother = self.dgLrf
 
@@ -684,9 +690,8 @@ class system:
 
         gamma = self.config["gamma"]
 
-        # THIS SEEMS TO BE SIGNIFICANT!!!!!!!!!!
-        ff = np.zeros(ul.shape)
-        p, v = self.flux.flux(ul, ff)
+        f_f = np.zeros(ul.shape)
+        p, v = self.flux.flux(ul, f_f)
 
         if side == "left":
             invJac = self.invJac[0]
