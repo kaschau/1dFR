@@ -157,10 +157,10 @@ class system:
         self.M7 = np.einsum("xp, pu -> xu", dV, self.invuvdm)
 
         # compute derivative of correction functions at flux points in transformed space
-        self.dgLf, _ = vcjg(order, c, np.array([-1]), der=True)
-        _, self.dgRf = vcjg(order, c, np.array([1]), der=True)
+        self.dgLlf, self.dgRlf = vcjg(order, c, np.array([-1]), der=True)
+        self.dgLrf, self.dgRrf = vcjg(order, c, np.array([1]), der=True)
         # [nfpts x nupts]
-        self.M6 = np.array([self.dgLf, self.dgRf])
+        self.M6 = np.array([self.dgLlf, self.dgRrf])
 
         # create integrator and state arrays
         # [nvar x nupts x neles]
@@ -664,22 +664,28 @@ class system:
 
         return f
 
-    def _bc_nscbc_out_p(self, ul, dul, nl, elef, side=None, **kwargs):
+    def _bc_nscbc_out_p(self, ul, dul, nl, elef, side=None, fc_other=None, **kwargs):
         # derivative of flux/correction function at face
         # in transformed space
         if side == "left":
             df = np.einsum("vu, fu -> vf", elef, self.M7)[:, 0]
-            dg = self.dgLf
+            dg = self.dgLlf
+            ff = elef[:, 0]
+            fother = elef[:, -1]
+            dgother = self.dgRlf
         else:
             df = np.einsum("vu, fu -> vf", elef, self.M7)[:, -1]
-            dg = self.dgRf
+            dg = self.dgRrf
+            ff = elef[:, -1]
+            fother = elef[:, 0]
+            dgother = self.dgLrf
 
         sigma = 0.25
 
         gamma = self.config["gamma"]
-        # flux on face
-        ff = np.zeros(ul.shape)
-        p, v = self.flux.flux(ul, ff)
+        # flux on face (not used just need p,v)
+        f_f = np.zeros(ul.shape)
+        p, v = self.flux.flux(ul, f_f)
 
         if side == "left":
             invJac = self.invJac[0]
@@ -738,7 +744,7 @@ class system:
         # now de transform back
         dEdeta_star = Jac / Ex * dEhatdeta_star
 
-        fc = (dEdeta_star - df) / dg + ff
+        fc = (dEdeta_star - df - (fc_other - fother) * dgother) / dg + ff
 
         return fc
 
@@ -791,10 +797,20 @@ class system:
 
         # compute common flux on boundary
         self.fc[:, 0, 0] = self.bcl(
-            self.uf[:, 0, 0], du[:, 0, 0], -1, elef=f[:, :, 0], side="left"
+            self.uf[:, 0, 0],
+            du[:, 0, 0],
+            -1,
+            elef=f[:, :, 0],
+            side="left",
+            fc_other=self.fc[:, -1, 0],
         )
         self.fc[:, -1, -1] = self.bcr(
-            self.uf[:, -1, -1], du[:, -1, -1], 1, elef=f[:, :, -1], side="right"
+            self.uf[:, -1, -1],
+            du[:, -1, -1],
+            1,
+            elef=f[:, :, -1],
+            side="right",
+            fc_other=self.fc[:, 0, -1],
         )
 
         # Begin building of negdivconf, use fluxout bank
