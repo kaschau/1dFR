@@ -623,7 +623,7 @@ class system:
     def _u_to_f_closed(self, ubank):
         u = getattr(self, f"u{ubank}")
         self.uf[:, 0, :] = u[:, 0, :]
-        self.uR[:, 1, :] = u[:, 1, :]
+        self.uf[:, 1, :] = u[:, 1, :]
 
     def _u_to_f_open(self, ubank):
         u = getattr(self, f"u{ubank}")
@@ -865,7 +865,7 @@ class system:
 if __name__ == "__main__":
     config = {
         "p": 3,
-        "quad": "gauss-legendre",
+        "quad": "gauss-legendre-lobatto",
         "intg": "rk4",
         "intflux": "rusanov",
         "gamma": 1.4,
