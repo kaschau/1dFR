@@ -669,16 +669,22 @@ class system:
         # in transformed space
         if side == "left":
             df = np.einsum("vu, fu -> vf", elef, self.M7)[:, 0]
-            ff = elef[:, 0]
-            fother = elef[:, -1]
             dg = self.dgLlf
-            dgother = self.dgLrf
+            if self.fpts_in_upts:
+                ff = elef[:, 0]
+            else:
+                ff = np.einsum("ux,vx...->vu...", self.M2, elef)[:, 0]
+            fother = elef[:, -1]
+            dgother = self.dgRlf
         else:
             df = np.einsum("vu, fu -> vf", elef, self.M7)[:, -1]
-            ff = elef[:, -1]
-            fother = elef[:, 0]
             dg = self.dgRrf
-            dgother = self.dgRlf
+            if self.fpts_in_upts:
+                ff = elef[:, -1]
+            else:
+                ff = np.einsum("ux,vx...->vu...", self.M2, elef)[:, -1]
+            fother = elef[:, 0]
+            dgother = self.dgLrf
 
         sigma = 0.25
 
