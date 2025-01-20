@@ -157,10 +157,10 @@ class system:
         self.M7 = np.einsum("xp, pu -> xu", dV, self.invuvdm)
 
         # compute derivative of correction functions at flux points in transformed space
-        self.dgLf, _ = vcjg(order, c, np.array([-1]), der=True)
-        _, self.dgRf = vcjg(order, c, np.array([1]), der=True)
+        self.dgLlf, self.dgLrf = vcjg(order, c, np.array([-1]), der=True)
+        self.dgRlf, self.dgRrf = vcjg(order, c, np.array([1]), der=True)
         # [nfpts x nupts]
-        self.M6 = np.array([self.dgLf, self.dgRf])
+        self.M6 = np.array([self.dgLlf, self.dgRrf])
 
         # create integrator and state arrays
         # [nvar x nupts x neles]
@@ -664,13 +664,28 @@ class system:
 
         return f
 
-    def _bc_nscbc_out_p(self, ul, dul, nl, elef, side=None, **kwargs):
+    def _bc_nscbc_out_p(self, ul, dul, nl, elef, side=None, fc_other=None, **kwargs):
+        # derivative of flux/correction function at face
+        # in transformed space
+        if side == "left":
+            df = np.einsum("vu, fu -> vf", elef, self.M7)[:, 0]
+            ff = elef[:, 0]
+            fother = elef[:, -1]
+            dg = self.dgLlf
+            dgother = self.dgLrf
+        else:
+            df = np.einsum("vu, fu -> vf", elef, self.M7)[:, -1]
+            ff = elef[:, -1]
+            fother = elef[:, 0]
+            dg = self.dgRrf
+            dgother = self.dgRlf
+
         sigma = 0.25
 
         gamma = self.config["gamma"]
         # flux on face
-        ff = np.zeros(ul.shape)
-        p, v = self.flux.flux(ul, ff)
+        f_f = np.zeros(ul.shape)
+        p, v = self.flux.flux(ul, f_f)
 
         rho = ul[0]
         rhov = ul[1]
@@ -723,15 +738,7 @@ class system:
         dudt[1] = v * d1 + rho * d2
         dudt[2] = 0.5 * v**2 * d1 + rhov * d2 + d5 / (gamma - 1)
 
-        # derivative of flux/correction function at face
-        # in transformed space
-        if side == "left":
-            df = np.einsum("vu, fu -> vf", elef, self.M7)[:, 0]
-            dg = self.dgLf
-        else:
-            df = np.einsum("vu, fu -> vf", elef, self.M7)[:, -1]
-            dg = self.dgRf
-        fc = (1.0 / invJac * dudt - df) / dg + ff
+        fc = (1.0 / invJac * dudt - df - (fc_other - fother) * dgother) / dg + ff
 
         return fc
 
@@ -784,24 +791,34 @@ class system:
 
         # compute common flux on boundary
         self.fc[:, 0, 0] = self.bcl(
-            self.uf[:, 0, 0], du[:, 0, 0], -1, elef=f[:, :, 0], side="left"
+            self.uf[:, 0, 0],
+            du[:, 0, 0],
+            -1,
+            elef=f[:, :, 0],
+            side="left",
+            fc_other=self.fc[:, 1, 0],
         )
         self.fc[:, -1, -1] = self.bcr(
-            self.uf[:, -1, -1], du[:, -1, -1], 1, elef=f[:, :, -1], side="right"
+            self.uf[:, -1, -1],
+            du[:, -1, -1],
+            1,
+            elef=f[:, :, -1],
+            side="right",
+            fc_other=self.fc[:, 0, -1],
         )
 
         # Begin building of negdivconf, use fluxout bank
 
         # evaluate discontinuous flux at flux points
         # M2*f
-        # self.ff[:] = np.einsum("ux,vx...->vu...", self.M2, f)
+        f_f = np.einsum("ux,vx...->vu...", self.M2, f)
         # compute flux derivative at solution points
         # M1*f
-        # negdivconf[:] = np.einsum("ux,vx...->vu...", self.M1, f)
+        df_u = np.einsum("ux,vx...->vu...", self.M1, f)
 
         # add the left/right jumps to negdivconf
         # M3*(fc - M2*f)
-        # negdivconf += np.einsum("vf...,fx->vx...", self.fc - self.ff, self.M3)
+        adder = np.einsum("vf...,fx->vx...", self.fc - f_f, self.M3)
 
         # R = M3*fc + (M1 - M3*M2)*f
         negdivconf = np.einsum("vf..., fx -> vx...", self.fc, self.M3) + np.einsum(
@@ -866,7 +883,7 @@ class system:
 if __name__ == "__main__":
     config = {
         "p": 3,
-        "quad": "gauss-legendre-lobatto",
+        "quad": "gauss-legendre",
         "intg": "rk4",
         "intflux": "rusanov",
         "gamma": 1.4,
