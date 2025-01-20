@@ -683,9 +683,10 @@ class system:
         sigma = 0.25
 
         gamma = self.config["gamma"]
-        # flux on face (not used just need p,v)
-        f_f = np.zeros(ul.shape)
-        p, v = self.flux.flux(ul, f_f)
+
+        # THIS SEEMS TO BE SIGNIFICANT!!!!!!!!!!
+        ff = np.zeros(ul.shape)
+        p, v = self.flux.flux(ul, ff)
 
         if side == "left":
             invJac = self.invJac[0]
@@ -889,7 +890,7 @@ class system:
 if __name__ == "__main__":
     config = {
         "p": 3,
-        "quad": "gauss-legendre-lobatto",
+        "quad": "gauss-legendre",
         "intg": "rk4",
         "intflux": "rusanov",
         "gamma": 1.4,
