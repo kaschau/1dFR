@@ -731,7 +731,7 @@ class system:
         else:
             df = np.einsum("vu, fu -> vf", elef, self.M7)[:, -1]
             dg = self.dgRf
-        fc = (1.0 / invJac * dudt - df + ff * dg) / dg
+        fc = (1.0 / invJac * dudt - df) / dg + ff
 
         return fc
 
@@ -895,7 +895,7 @@ if __name__ == "__main__":
     # p = 1.0
 
     # wave
-    center = 0.50
+    center = 0.750
     height = 0.25
     u_inf = 1.0
     p_inf = 1.0
