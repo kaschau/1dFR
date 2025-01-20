@@ -623,7 +623,7 @@ class system:
     def _u_to_f_closed(self, ubank):
         u = getattr(self, f"u{ubank}")
         self.uf[:, 0, :] = u[:, 0, :]
-        self.uR[:, 1, :] = u[:, 1, :]
+        self.uf[:, 1, :] = u[:, 1, :]
 
     def _u_to_f_open(self, ubank):
         u = getattr(self, f"u{ubank}")
@@ -694,9 +694,15 @@ class system:
         rhoE = ul[2]
         c = np.sqrt(self.config["gamma"] * p / rho)
 
-        # First step is to construct L from df (derivative of flux in transformed space
-        # normal to face)
+        # normal in direction of transformed coord
         Extil = Ex / np.sqrt(Ex**2)
+
+        # First step, approximate \del E/\del\eta with all interior values
+        # this is df from above
+        dEdeta = df
+
+        # Convert to dEhat/deta
+        dEhatdeta = invJac * Ex * dEdeta
 
         # Create P matrix
         P = np.array(
@@ -715,19 +721,24 @@ class system:
             ],
         )
 
-        L = Jac * np.linalg.inv(P) @ df
+        # now solve for L
+        L = Jac * np.linalg.inv(P) @ dEhatdeta
 
         L1 = L[0]
         L4 = L[1]
         # Must guess wave entering domain
         L5 = Jac * (sigma / rho) * (1 - (abs(v) / c) ** 2) / 1.0 * (p - p_inf)
+        # L5 = L[2]
 
         Lstar = np.array([L1, L4, L5])
 
-        # now compute modified normal flux derivative in transformed space
-        dEde_star = invJac * P @ Lstar
+        # now compute modified dEhatdeta
+        dEhatdeta_star = invJac * P @ Lstar
 
-        fc = (Jac * dEde_star - df + ff * dg) / dg
+        # now de transform back
+        dEdeta_star = Jac / Ex * dEhatdeta_star
+
+        fc = (dEdeta_star - df) / dg + ff
 
         return fc
 
