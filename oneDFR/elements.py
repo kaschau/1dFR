@@ -623,7 +623,7 @@ class system:
     def _u_to_f_closed(self, ubank):
         u = getattr(self, f"u{ubank}")
         self.uf[:, 0, :] = u[:, 0, :]
-        self.uf[:, 1, :] = u[:, 1, :]
+        self.uf[:, 1, :] = u[:, -1, :]
 
     def _u_to_f_open(self, ubank):
         u = getattr(self, f"u{ubank}")
