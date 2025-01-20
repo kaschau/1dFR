@@ -798,7 +798,6 @@ class system:
         )
 
         # Begin building of negdivconf, use fluxout bank
-        negdivconf = getattr(self, f"u{fbankout}")
 
         # evaluate discontinuous flux at flux points
         # M2*f
@@ -812,7 +811,7 @@ class system:
         # negdivconf += np.einsum("vf...,fx->vx...", self.fc - self.ff, self.M3)
 
         # R = M3*fc + (M1 - M3*M2)*f
-        negdivconf[:] = np.einsum("vf..., fx -> vx...", self.fc, self.M3) + np.einsum(
+        negdivconf = np.einsum("vf..., fx -> vx...", self.fc, self.M3) + np.einsum(
             "ux, vx... -> vu...",
             self.M1 - np.einsum("ij, ik -> jk", self.M3, self.M2),
             f,
@@ -820,6 +819,8 @@ class system:
 
         # transform to neg flux in physical coords
         negdivconf *= -self.invJac
+
+        getattr(self, f"u{fbankout}")[:] = negdivconf[:]
 
     def read_grid(self):
         fname = self.config["mesh"]
