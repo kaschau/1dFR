@@ -873,7 +873,7 @@ class system:
 if __name__ == "__main__":
     config = {
         "p": 3,
-        "quad": "gauss-legendre",
+        "quad": "gauss-legendre-lobatto",
         "intg": "rk4",
         "intflux": "rusanov",
         "gamma": 1.4,
