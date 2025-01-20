@@ -683,9 +683,10 @@ class system:
         sigma = 0.25
 
         gamma = self.config["gamma"]
-        # flux on face
-        f_f = np.zeros(ul.shape)
-        p, v = self.flux.flux(ul, f_f)
+
+        # THIS IS SIGNIFICANT!!
+        ff = np.zeros(ul.shape)
+        p, v = self.flux.flux(ul, ff)
 
         rho = ul[0]
         rhov = ul[1]
