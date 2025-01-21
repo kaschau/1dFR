@@ -705,12 +705,11 @@ class system:
             invJac = self.invJac[-1]
             Ex = self.Ex[-1]
 
-        # convert derivatives to physical space
-        drho = dul[0] * Ex
-        drhov = dul[1] * Ex
-        drhoE = dul[2] * Ex
+        drho = dul[0]
+        drhov = dul[1]
+        drhoE = dul[2]
 
-        # spatial derivative of primitives (physical)
+        # spatial derivative of primitives (transformed)
         dp = (gamma - 1.0) * (drhoE - 0.5 * drho * v**2 - rhov * drhov)
         dv = (drhov - drho * v) / rho
 
@@ -723,8 +722,8 @@ class system:
 
         # Compute wave amplitude speeds
         nx = nl
-        L1 = V * (nx * drho - nx / c**2 * dp) / Ex
-        L4 = 1.0 / np.sqrt(2) * (V + C) * (nx * dv + 1 / (rho * c) * dp) / Ex
+        L1 = V * (nx * drho - nx / c**2 * dp)
+        L4 = 1.0 / np.sqrt(2) * (V + C) * (nx * dv + 1 / (rho * c) * dp)
         # Must guess wave entering domain
         L5 = (
             (1 / invJac)
