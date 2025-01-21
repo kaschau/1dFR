@@ -690,7 +690,6 @@ class system:
 
         gamma = self.config["gamma"]
 
-        # THIS IS SIGNIFICANT!!
         f_f = np.zeros(ul.shape)
         p, v = self.flux.flux(ul, f_f)
 
@@ -710,8 +709,8 @@ class system:
         drhoE = dul[2]
 
         # spatial derivative of primitives (transformed)
-        dp = (gamma - 1.0) * (drhoE - 0.5 * drho * v**2 - rhov * drhov)
         dv = (drhov - drho * v) / rho
+        dp = (gamma - 1.0) * (drhoE - 0.5 * drho * v**2 - rhov * dv)
 
         c = np.sqrt(self.config["gamma"] * p / rho)
 
@@ -744,7 +743,17 @@ class system:
         dudt[1] = v * d1 + rho * d2
         dudt[2] = 0.5 * v**2 * d1 + rhov * d2 + d5 / (gamma - 1)
 
+        # full
         fc = (1.0 / invJac * dudt - df - (fc_other - fother) * dgother) / dg + ff
+
+        # simpler
+        fc = (1.0 / invJac * dudt - df - (fc_other - fother) * dgother) / dg + f_f
+
+        # simpler-er
+        fc = (1.0 / invJac * dudt - df) / dg + f_f
+
+        # simplest
+        fc = (1.0 / invJac * dudt - df_a) / dg + f_f
 
         return fc
 
