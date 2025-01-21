@@ -714,7 +714,7 @@ class system:
         dEdeta = df
 
         # Convert to dEhat/deta
-        dEhatdeta = invJac * Ex * dEdeta
+        dEhatdeta = Ex * dEdeta
 
         # Create P matrix
         P = np.array(
@@ -732,9 +732,26 @@ class system:
                 ],
             ],
         )
+        PQ = np.array(
+            [
+                [Extil, 0, -Extil / c**2],
+                [0, Extil / np.sqrt(2), 1 / (np.sqrt(2) * rho * c)],
+                [0, -Extil / np.sqrt(2), 1 / (np.sqrt(2) * rho * c)],
+            ]
+        )
+        QU = np.array(
+            [
+                [1, 0, 0],
+                [-v / rho, 1 / rho, 0],
+                [1 / 2 * v**2 * (gamma - 1), -(gamma - 1) * v, (gamma - 1)],
+            ]
+        )
+
+        P2 = PQ @ QU
+        P = P2
 
         # now solve for L
-        L = Jac * np.linalg.inv(P) @ dEhatdeta
+        L = P @ dEhatdeta
 
         L1 = L[0]
         L4 = L[1]
@@ -745,10 +762,10 @@ class system:
         Lstar = np.array([L1, L4, L5])
 
         # now compute modified dEhatdeta
-        dEhatdeta_star = invJac * P @ Lstar
+        dEhatdeta_star = np.linalg.inv(P) @ Lstar
 
         # now de transform back
-        dEdeta_star = Jac / Ex * dEhatdeta_star
+        dEdeta_star = 1.0 / Ex * dEhatdeta_star
 
         fc = (dEdeta_star - df - (fc_other - fother) * dgother) / dg + ff
 
