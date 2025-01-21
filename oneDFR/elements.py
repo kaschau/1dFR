@@ -767,9 +767,28 @@ class system:
         # now de transform back
         dEdeta_star = 1.0 / Ex * dEhatdeta_star
 
+        # full matching continuous flux
         fc = (dEdeta_star - df - (fc_other - fother) * dgother) / dg + ff
 
-        return fc
+        # approximate matching fc from only local values
+        fc_a = (dEdeta_star - df) / dg + f_f
+
+        # more approximate matching using purely local values
+        # spatial derivative of (transformed space)
+        drho = dul[0]
+        drhov = dul[1]
+        drhoE = dul[2]
+        dv = (drhov - drho * v) / rho
+        dp = (gamma - 1.0) * (drhoE - 0.5 * (drho * v**2 + rhov * dv))
+
+        df_a = np.zeros(ul.shape)
+        df_a[0] = v * drho + rho * dv
+        df_a[1] = v**2 * drho + 2 * rhov * dv + dp
+        df_a[2] = v * drhoE + rhoE * dv + v * dp + p * dv
+
+        fc_aa = (dEdeta_star - df_a) / dg + f_f
+
+        return fc_aa
 
     def _bc_ent_wall(self, ul, side):
         ur = ul
