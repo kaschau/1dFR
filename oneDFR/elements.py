@@ -691,8 +691,8 @@ class system:
         gamma = self.config["gamma"]
 
         # THIS IS SIGNIFICANT!!
-        ff = np.zeros(ul.shape)
-        p, v = self.flux.flux(ul, ff)
+        f_f = np.zeros(ul.shape)
+        p, v = self.flux.flux(ul, f_f)
 
         rho = ul[0]
         rhov = ul[1]
