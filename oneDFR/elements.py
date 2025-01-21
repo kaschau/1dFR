@@ -720,7 +720,7 @@ class system:
         C = c * np.sqrt(Ex**2)
 
         # Compute wave amplitude speeds
-        nx = nl
+        nx = Extil
         L1 = V * (nx * drho - nx / c**2 * dp)
         L4 = 1.0 / np.sqrt(2) * (V + C) * (nx * dv + 1 / (rho * c) * dp)
         # Must guess wave entering domain
@@ -747,15 +747,19 @@ class system:
         fc = (1.0 / invJac * dudt - df - (fc_other - fother) * dgother) / dg + ff
 
         # simpler
-        fc = (1.0 / invJac * dudt - df - (fc_other - fother) * dgother) / dg + f_f
+        fc_a = (1.0 / invJac * dudt - df - (fc_other - fother) * dgother) / dg + f_f
 
         # simpler-er
-        fc = (1.0 / invJac * dudt - df) / dg + f_f
+        fc_aa = (1.0 / invJac * dudt - df) / dg + f_f
 
         # simplest
-        fc = (1.0 / invJac * dudt - df_a) / dg + f_f
+        df_a = np.zeros(ul.shape)
+        df_a[0] = v * drho + rho * dv
+        df_a[1] = v**2 * drho + 2 * rhov * dv + dp
+        df_a[2] = v * drhoE + rhoE * dv + v * dp + p * dv
+        fc_aaa = (1.0 / invJac * dudt - df_a) / dg + f_f
 
-        return fc
+        return fc_aa
 
     def _bc_ent_wall(self, ul, side):
         ur = ul
