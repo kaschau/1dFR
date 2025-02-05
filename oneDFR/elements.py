@@ -665,10 +665,17 @@ class system:
         return f
 
     def _bc_nscbc_out_p(self, ul, dul, nl, elef, side=None, fc_other=None, **kwargs):
+        if side == "left":
+            invJac = self.invJac[0]
+            smats = self.smats[0]
+        else:
+            invJac = self.invJac[-1]
+            smats = self.smats[-1]
+
         # derivative of flux/correction function at face
         # in transformed space
         if side == "left":
-            df = np.einsum("vu, fu -> vf", elef, self.M7)[:, 0]
+            df = np.einsum("vu, fu -> vf", elef * smats, self.M7)[:, 0]
             dg = self.dgLlf
             if self.fpts_in_upts:
                 ff = elef[:, 0]
@@ -677,7 +684,7 @@ class system:
             fother = elef[:, -1]
             dgother = self.dgRlf
         else:
-            df = np.einsum("vu, fu -> vf", elef, self.M7)[:, -1]
+            df = np.einsum("vu, fu -> vf", elef * smats, self.M7)[:, -1]
             dg = self.dgRrf
             if self.fpts_in_upts:
                 ff = elef[:, -1]
@@ -693,12 +700,6 @@ class system:
         f_f = np.zeros(ul.shape)
         p, v = self.flux.flux(ul, f_f)
 
-        if side == "left":
-            invJac = self.invJac[0]
-            Ex = self.Ex[0]
-        else:
-            invJac = self.invJac[-1]
-            Ex = self.Ex[-1]
         Jac = 1 / invJac
 
         rho = ul[0]
@@ -707,28 +708,25 @@ class system:
         c = np.sqrt(self.config["gamma"] * p / rho)
 
         # normal in direction of transformed coord
-        Extil = Ex / np.sqrt(Ex**2)
+        Extil = nl
 
-        # First step, approximate \del E/\del\eta with all interior values
-        # this is df from above
-        dEdeta = df
-
-        # Convert to dEhat/deta
-        dEhatdeta = Ex * dEdeta
+        # First step, approximate \del Ehat/\del\eta with all interior values
+        # just df above
+        dEhatdeta = df
 
         # Create P matrix
         P = np.array(
             [
-                [Extil, rho / (2 * c), rho / (2 * c)],
+                [nl, rho / (2 * c), rho / (2 * c)],
                 [
-                    v * Extil,
-                    rho / (2 * c) * (v + Extil * c),
-                    rho / (2 * c) * (v - Extil * c),
+                    v * nl,
+                    rho / (2 * c) * (v + nl * c),
+                    rho / (2 * c) * (v - nl * c),
                 ],
                 [
-                    v**2 / 2 * Extil + rho * v * Extil,
-                    rho / (2 * c) * (v**2 / 2 + c**2 / (gamma - 1) + v * c * Extil),
-                    rho / (2 * c) * (v**2 / 2 + c**2 / (gamma - 1) - v * c * Extil),
+                    v**2 / 2 * nl + rho * v * nl,
+                    rho / (2 * c) * (v**2 / 2 + c**2 / (gamma - 1) + v * c * nl),
+                    rho / (2 * c) * (v**2 / 2 + c**2 / (gamma - 1) - v * c * nl),
                 ],
             ],
         )
@@ -764,14 +762,11 @@ class system:
         # now compute modified dEhatdeta
         dEhatdeta_star = np.linalg.inv(P) @ Lstar
 
-        # now de transform back
-        dEdeta_star = 1.0 / Ex * dEhatdeta_star
-
         # full matching continuous flux
-        fc = (dEdeta_star - df - (fc_other - fother) * dgother) / dg + ff
+        fc = (dEhatdeta_star - df - (fc_other - fother) * dgother) / dg + ff
 
         # approximate matching fc from only local values
-        fc_a = (dEdeta_star - df) / dg + f_f
+        fc_a = (dEhatdeta_star - df) / dg + f_f
 
         # more approximate matching using purely local values
         # spatial derivative of (transformed space)
@@ -786,9 +781,9 @@ class system:
         df_a[1] = v**2 * drho + 2 * rhov * dv + dp
         df_a[2] = v * drhoE + rhoE * dv + v * dp + p * dv
 
-        fc_aa = (dEdeta_star - df_a) / dg + f_f
+        fc_aa = (dEhatdeta_star - df_a) / dg + f_f
 
-        return fc_aa
+        return fc
 
     def _bc_ent_wall(self, ul, side):
         ur = ul
@@ -855,6 +850,9 @@ class system:
             fc_other=self.fc[:, 0, -1],
         )
 
+        # Transform the flux
+        f[:] *= self.smats
+
         # Begin building of negdivconf, use fluxout bank
 
         # evaluate discontinuous flux at flux points
@@ -889,9 +887,10 @@ class system:
             "i,j->ij", self.upts, h / 2.0
         )
         self.invJac = 2.0 / h
+        self.Jac = h / 2.0
         # "metrics"
         self.Xe = h / 2.0
-        self.Ex = self.invJac
+        self.smats = self.Jac * 1 / self.Xe
         self.neles = np.shape(eles)[0]
 
     def set_ics(self, pris):
@@ -977,7 +976,7 @@ if __name__ == "__main__":
     c = np.sqrt(gamma * np.max(p) / np.min(rho)) + np.max(np.abs(v))
     dt = CFL * dx / c
     config["dt"] = dt
-    config["tend"] = 2.0
+    config["tend"] = 1.0
 
     a.set_ics([rho, v, p])
     a.run()
