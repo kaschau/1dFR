@@ -667,10 +667,10 @@ class system:
     def _bc_nscbc_out_p(self, ul, dul, nl, elef, side=None, fc_other=None, **kwargs):
         if side == "left":
             invJac = self.invJac[0]
-            smats = self.smats[0]
+            smats = self.smats[0] / invJac
         else:
             invJac = self.invJac[-1]
-            smats = self.smats[-1]
+            smats = self.smats[-1] / invJac
 
         # derivative of flux/correction function at face
         # in transformed space
@@ -929,7 +929,7 @@ class system:
 
 if __name__ == "__main__":
     config = {
-        "p": 3,
+        "p": 1,
         "quad": "gauss-legendre",
         "intg": "rk4",
         "intflux": "rusanov",
@@ -960,7 +960,7 @@ if __name__ == "__main__":
     # p = 1.0
 
     # wave
-    center = 0.750
+    center = 0.950
     height = 0.25
     u_inf = 1.0
     p_inf = 1.0
