@@ -378,7 +378,7 @@ if __name__ == "__main__":
         "gamma": 1.4,
         "bc": "wall",
         "mesh": "mesh-100.npy",
-        "efniter": 20,
+        "efilt": "variable",
     }
 
     try:
@@ -389,7 +389,7 @@ if __name__ == "__main__":
     try:
         config["effunc"] = sys.argv[2]
     except IndexError:
-        config["effunc"] = "dim"
+        config["effunc"] = "nondim"
 
     try:
         if sys.argv[3] == "gll":
@@ -402,7 +402,7 @@ if __name__ == "__main__":
     try:
         config["efilt"] = sys.argv[4]
     except IndexError:
-        config["efilt"] = "linearise"
+        config["efilt"] = "variable"
 
     plot = True
     savefig = False
@@ -461,9 +461,7 @@ if __name__ == "__main__":
 
     for key in ["rho", "v", "p"]:
         error[key] = [
-            np.linalg.norm(
-                frres[key].ravel(order="F") - anres[key], np.inf
-            ),
+            np.linalg.norm(frres[key].ravel(order="F") - anres[key], np.inf),
             np.linalg.norm(frres[key].ravel(order="F") - anres[key], 2),
         ]
 
