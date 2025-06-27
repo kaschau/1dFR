@@ -646,36 +646,42 @@ class system:
                 for pt_idx in range(nupts):
                     u_point = ui[:, pt_idx, 0]
                     u_mean = umodes[:, 0, 0]
-                    
+
                     current_entropy = self.entropy(u_point.reshape(-1, 1, 1))[0, 0]
-                    
+
                     if current_entropy >= entmin[idx] - e_tol:
                         continue
-                    
+
                     entropy_grad = self._compute_entropy_gradients(u_point)
                     delta_target = entmin[idx] - current_entropy + e_tol
-                    
+
                     theta_var = np.zeros(3)
-                    
+
                     for var_idx in range(3):
                         if abs(entropy_grad[var_idx]) > fpdtype_min:
                             delta_u = u_mean[var_idx] - u_point[var_idx]
-                            
+
                             if abs(delta_u) > fpdtype_min:
-                                theta_needed = delta_target / (entropy_grad[var_idx] * delta_u)
-                                
+                                theta_needed = delta_target / (
+                                    entropy_grad[var_idx] * delta_u
+                                )
+
                                 if entropy_grad[var_idx] * delta_u > 0:
-                                    theta_var[var_idx] = max(0.0, min(1.0, theta_needed))
+                                    theta_var[var_idx] = max(
+                                        0.0, min(1.0, theta_needed)
+                                    )
                                 else:
                                     theta_var[var_idx] = 0.0
-                    
+
                     total_weight = np.sum(theta_var)
                     if total_weight > fpdtype_min:
                         theta_var = theta_var / total_weight * min(1.0, total_weight)
-                    
+
                     for var_idx in range(3):
                         if theta_var[var_idx] > fpdtype_min:
-                            ui[var_idx, pt_idx, 0] = u_mean[var_idx] + theta_var[var_idx] * (u_point[var_idx] - u_mean[var_idx])
+                            ui[var_idx, pt_idx, 0] = u_mean[var_idx] + theta_var[
+                                var_idx
+                            ] * (u_point[var_idx] - u_mean[var_idx])
 
                 self.upoly.compute_coeff(umodes, ui[:, 0:nupts], invuvdm)
 
