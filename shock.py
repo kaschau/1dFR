@@ -373,36 +373,18 @@ if __name__ == "__main__":
 
     config = {
         "p": 3,
-        "intg": "rk3",
-        "intflux": "hllc",
+        "intg": "rk4",
+        "intflux": "rusanov",
         "gamma": 1.4,
         "bc": "wall",
-        "mesh": "mesh-100.npy",
-        "efilt": "variable",
     }
 
-    try:
-        testnum = int(sys.argv[1])
-    except IndexError:
-        testnum = 1
-
-    try:
-        config["effunc"] = sys.argv[2]
-    except IndexError:
-        config["effunc"] = "nondim"
-
-    try:
-        if sys.argv[3] == "gll":
-            config["quad"] = "gauss-legendre-lobatto"
-        else:
-            config["quad"] = "gauss-legendre"
-    except IndexError:
-        config["quad"] = "gauss-legendre"
-
-    try:
-        config["efilt"] = sys.argv[4]
-    except IndexError:
-        config["efilt"] = "variable"
+    testnum = 0
+    config["effunc"] = "nondim"
+    config["quad"] = "gauss-legendre"
+    config["efilt"] = "variable"
+    config["mesh"] = "mesh-50.npy"
+    config["e_tol"] = 0.0
 
     plot = True
     savefig = False

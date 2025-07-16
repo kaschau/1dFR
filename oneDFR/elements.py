@@ -8,7 +8,7 @@ from oneDFR.output import plot
 
 np.seterr(all="raise")
 fpdtype_max = 1e10  # np.finfo(np.float64).max
-fpdtype_min = np.finfo(np.float64).eps
+fpdtype_eps = np.finfo(np.float64).eps
 
 
 def noop(*args, **kwargs):
@@ -162,13 +162,10 @@ class system:
             self.entropy_local = self._entropy_local
             if self.efilt == "bisect":
                 self.entropy_filter = self._entropy_filter_bisect
-                self.get_minima = self._get_minima_bisect
             elif self.efilt == "linearise":
                 self.entropy_filter = self._entropy_filter_linearise
-                self.get_minima = self._get_minima_linearise
             elif self.efilt == "variable":
                 self.entropy_filter = self._entropy_filter_variable
-                self.get_minima = self._get_minima_linearise
             else:
                 raise ValueError("What entropy filter?")
             self.bcent = getattr(self, f"_bc_ent_{config["bc"]}")
@@ -250,7 +247,7 @@ class system:
             self.entmin_int[1, 0:-1], self.entmin_int[0, 1::]
         )
 
-    def _get_minima_bisect(self, u, modes, entmin):
+    def _get_minima(self, u, modes, entmin):
         nupts = self.nupts
         rho = u[0, 0:nupts]
         v = u[1, 0:nupts] / rho
@@ -297,45 +294,6 @@ class system:
             e = np.minimum(e, np.min(eR, axis=0))
 
         return rho, p, e, X
-
-    def _get_minima_linearise(self, u, modes, entmin):
-        return self._get_minima_bisect(u, modes, entmin)
-        rho = u[0]
-        v = u[1] / rho
-        rhoe = u[2] - 0.5 * rho * v**2
-
-        e = self.entropy(u)
-
-        rho = np.min(rho, axis=0)
-        rhoe = np.min(rhoe, axis=0)
-        e = np.min(e, axis=0)
-
-        if not self.fpts_in_upts:
-            # interpolate to faces
-            uL = np.zeros((self.nvar, 1, u.shape[-1]))
-            self.upoly.evaluate(uL, self.rvdm, modes)
-            uR = np.zeros((self.nvar, 1, u.shape[-1]))
-            self.upoly.evaluate(uR, self.lvdm, modes)
-
-            rhoL = uL[0]
-            vL = uL[1] / rhoL
-            rhoeL = uL[2] - 0.5 * rhoL * vL**2
-            eL = self.entropy(uL)
-
-            rho = np.minimum(rho, np.min(rhoL, axis=0))
-            rhoe = np.minimum(rhoe, np.min(rhoeL, axis=0))
-            e = np.minimum(e, np.min(eL, axis=0))
-
-            rhoR = uR[0]
-            vR = uR[1] / rhoR
-            rhoeR = uR[2] - 0.5 * rhoR * vR**2
-            eR = self.entropy(uR)
-
-            rho = np.minimum(rho, np.min(rhoR, axis=0))
-            rhoe = np.minimum(rhoe, np.min(rhoeR, axis=0))
-            e = np.minimum(e, np.min(eR, axis=0))
-
-        return rho, rhoe, e
 
     def _chi(self, u, e, entmin):
         return u[0] * (e - entmin)
@@ -400,7 +358,7 @@ class system:
         entmin = np.min(self.entmin_int, axis=0)
 
         # compute rho, p, e for all elements
-        dmin, pmin, emin, Xmin = self.get_minima(u, self.ua, entmin)
+        dmin, pmin, emin, Xmin = self._get_minima(u, self.ua, entmin)
 
         filtidx = np.where(
             np.bitwise_or(
@@ -467,7 +425,7 @@ class system:
             self.upoly.compute_coeff(self.ua[:, :, idx : idx + 1], unew, self.invuvdm)
 
         # update all min interface entropy
-        _, _, emin, _ = self.get_minima(u, self.ua, entmin)
+        _, _, emin, _ = self._get_minima(u, self.ua, entmin)
         self.entmin_int[:] = emin
 
     def _entropy_filter_linearise(self, ubank):
@@ -491,7 +449,7 @@ class system:
         entmin = np.min(self.entmin_int, axis=0)
 
         # compute rho, p, e for all elements
-        dmin, pmin, _, Xmin = self.get_minima(u, self.ua, entmin)
+        dmin, pmin, _, Xmin = self._get_minima(u, self.ua, entmin)
 
         filtidx = np.where(
             np.bitwise_or(
@@ -515,35 +473,35 @@ class system:
                 self.upoly.evaluate(ui, self.efvdm, umodes)
 
             # First test for negative density
-            dmin, pmin, _, Xmin = self.get_minima(ui, umodes, entmin[idx])
+            dmin, pmin, _, Xmin = self._get_minima(ui, umodes, entmin[idx])
             if dmin < d_min:
                 theta = (umodes[0, 0, 0] - d_min) / max(
-                    umodes[0, 0, 0] - dmin, fpdtype_min
+                    umodes[0, 0, 0] - dmin, fpdtype_eps
                 )
                 theta = min(1.0, max(theta, 0.0))
                 ui[0, :, 0] = umodes[0, 0, 0] + theta * (ui[0, :, 0] - umodes[0, 0, 0])
                 self.upoly.compute_coeff(umodes, ui[:, 0:nupts], invuvdm)
-                dmin, pmin, _, Xmin = self.get_minima(ui, umodes, entmin[idx])
+                dmin, pmin, _, Xmin = self._get_minima(ui, umodes, entmin[idx])
 
             # Now test for negative internal energy
             if pmin < p_min:
                 rhoeave = umodes[2, 0, 0] - 0.5 * umodes[1, 0, 0] ** 2 / umodes[0, 0, 0]
                 pave = (self.config["gamma"] - 1.0) * rhoeave
-                theta = (pave - p_min) / max(pave - pmin, fpdtype_min)
+                theta = (pave - p_min) / max(pave - pmin, fpdtype_eps)
                 theta = min(1.0, max(theta, 0.0))
 
                 ui[:, 0:nupts, 0] = umodes[:, 0, 0][:, np.newaxis] + theta * (
                     ui[:, 0:nupts, 0] - umodes[:, 0, 0][:, np.newaxis]
                 )
                 self.upoly.compute_coeff(umodes, ui[:, 0:nupts], invuvdm)
-                dmin, pmin, _, Xmin = self.get_minima(ui, umodes, entmin[idx])
+                dmin, pmin, _, Xmin = self._get_minima(ui, umodes, entmin[idx])
 
             # Finally, test for entropy
             if Xmin < -e_tol:
                 Xavg = self._chi(
                     umodes[:, 0, 0], self.entropy(umodes[:, 0, :]), entmin[idx]
                 )
-                theta = (Xavg + e_tol) / max(Xavg - Xmin, fpdtype_min)
+                theta = (Xavg + e_tol) / max(Xavg - Xmin, fpdtype_eps)
                 theta = min(1.0, max(theta, 0.0))
 
                 ui[:, 0:nupts, 0] = umodes[:, 0, 0][:, np.newaxis] + theta * (
@@ -558,8 +516,42 @@ class system:
             self.ua[:, :, idx : idx + 1] = umodes
 
         # update all min interface entropy
-        _, _, emin, _ = self.get_minima(u, self.ua, entmin)
+        _, _, emin, _ = self._get_minima(u, self.ua, entmin)
         self.entmin_int[:] = emin
+
+    def optimal_combined_theta(self, C_values, theta_individual, s_current, s_min):
+        """
+        C_values: array of |∂s/∂u_i| * |ū_i - u_i| for each variable
+        theta_individual: array of individual thetas (0=mean, 1=original)
+        """
+        ds_needed = s_min - s_current
+
+        # Identify favorable variables
+        favorable = (theta_individual < 1.0) & (theta_individual > 0.0)
+
+        if not any(favorable):
+            return theta_individual  # can't improve
+
+        # Compute optimal unconstrained solution
+        C_fav = C_values[favorable]
+        lambda_opt = ds_needed / np.sum(C_fav**2)
+
+        # Compute thetas
+        theta_final = theta_individual.copy()
+        theta_final[favorable] = 1 - lambda_opt * C_fav
+
+        # Enforce bounds [0, 1]
+        theta_final = np.clip(theta_final, 0, 1)
+
+        # Check if we achieved target
+        ds_achieved = np.sum(C_values * (1 - theta_final))
+
+        if ds_achieved < ds_needed - 1e-10:
+            print(
+                f"Warning: Could only achieve Δs = {ds_achieved:.4f}, needed {ds_needed:.4f}"
+            )
+
+        return theta_final
 
     def _compute_entropy_gradients(self, u_point):
         rho, rho_v, rho_E = u_point[0], u_point[1], u_point[2]
@@ -591,10 +583,10 @@ class system:
         try:
             e_tol = self.config["e_tol"]
         except KeyError:
-            e_tol = 1e-6
+            e_tol = 0.0
 
         entmin = np.min(self.entmin_int, axis=0)
-        dmin, pmin, _, Xmin = self.get_minima(u, self.ua, entmin)
+        dmin, pmin, _, Xmin = self._get_minima(u, self.ua, entmin)
 
         filtidx = np.where(
             np.bitwise_or(
@@ -618,77 +610,70 @@ class system:
                 self.upoly.evaluate(ui, self.efvdm, umodes)
 
             # Step 1: Filter for positive density (same as linearise)
-            dmin, pmin, _, Xmin = self.get_minima(ui, umodes, entmin[idx])
+            dmin, pmin, _, Xmin = self._get_minima(ui, umodes, entmin[idx])
             if dmin < d_min:
                 theta = (umodes[0, 0, 0] - d_min) / max(
-                    umodes[0, 0, 0] - dmin, fpdtype_min
+                    umodes[0, 0, 0] - dmin, fpdtype_eps
                 )
                 theta = min(1.0, max(theta, 0.0))
                 ui[0, :, 0] = umodes[0, 0, 0] + theta * (ui[0, :, 0] - umodes[0, 0, 0])
                 self.upoly.compute_coeff(umodes, ui[:, 0:nupts], invuvdm)
-                dmin, pmin, _, Xmin = self.get_minima(ui, umodes, entmin[idx])
+                dmin, pmin, _, Xmin = self._get_minima(ui, umodes, entmin[idx])
 
             # Step 2: Filter for positive pressure (same as linearise)
             if pmin < p_min:
                 rhoeave = umodes[2, 0, 0] - 0.5 * umodes[1, 0, 0] ** 2 / umodes[0, 0, 0]
                 pave = (self.config["gamma"] - 1.0) * rhoeave
-                theta = (pave - p_min) / max(pave - pmin, fpdtype_min)
+                theta = (pave - p_min) / max(pave - pmin, fpdtype_eps)
                 theta = min(1.0, max(theta, 0.0))
 
                 ui[:, 0:nupts, 0] = umodes[:, 0, 0][:, np.newaxis] + theta * (
                     ui[:, 0:nupts, 0] - umodes[:, 0, 0][:, np.newaxis]
                 )
                 self.upoly.compute_coeff(umodes, ui[:, 0:nupts], invuvdm)
-                dmin, pmin, _, Xmin = self.get_minima(ui, umodes, entmin[idx])
+                dmin, pmin, _, Xmin = self._get_minima(ui, umodes, entmin[idx])
 
             # Step 3: Variable-specific entropy filtering
             if Xmin < -e_tol:
-                for pt_idx in range(nupts):
-                    u_point = ui[:, pt_idx, 0]
-                    u_mean = umodes[:, 0, 0]
+                u_mean = umodes[:, 0, 0]
+                ei = self.entropy(ui)
+                Xi = self._chi(ui, ei, entmin[idx])
+                minIdx = np.argmin(Xi)
+                X_point = Xi[minIdx]
+                u_point = ui[:, minIdx, 0]
+                s_grad = self._compute_entropy_gradients(u_point)
+                du = u_mean - u_point
+                C = s_grad * du
+                theta_var = np.zeros(3)
+                delta_s = -X_point / u_point[0]
 
-                    current_entropy = self.entropy(u_point.reshape(-1, 1, 1))[0, 0]
-
-                    if current_entropy >= entmin[idx] - e_tol:
+                if np.min(np.abs(s_grad)) < fpdtype_eps:
+                    pass
+                theta_var = np.ones(3)
+                for i, sg in enumerate(s_grad):
+                    if sg * du[i] < 0 or abs(du[i]) < fpdtype_eps:
                         continue
+                    else:
+                        theta_var[i] = max(0.0, 1.0 - (delta_s / sg) / du[i])
+                        if theta_var[i] < fpdtype_eps:
+                            theta_var[i] = 0.0
 
-                    entropy_grad = self._compute_entropy_gradients(u_point)
-                    delta_target = entmin[idx] - current_entropy + e_tol
-
-                    theta_var = np.zeros(3)
-
-                    for var_idx in range(3):
-                        if abs(entropy_grad[var_idx]) > fpdtype_min:
-                            delta_u = u_mean[var_idx] - u_point[var_idx]
-
-                            if abs(delta_u) > fpdtype_min:
-                                theta_needed = delta_target / (
-                                    entropy_grad[var_idx] * delta_u
-                                )
-
-                                if entropy_grad[var_idx] * delta_u > 0:
-                                    theta_var[var_idx] = max(
-                                        0.0, min(1.0, theta_needed)
-                                    )
-                                else:
-                                    theta_var[var_idx] = 0.0
-
-                    total_weight = np.sum(theta_var)
-                    if total_weight > fpdtype_min:
-                        theta_var = theta_var / total_weight * min(1.0, total_weight)
-
-                    for var_idx in range(3):
-                        if theta_var[var_idx] > fpdtype_min:
-                            ui[var_idx, pt_idx, 0] = u_mean[var_idx] + theta_var[
-                                var_idx
-                            ] * (u_point[var_idx] - u_mean[var_idx])
-
+                theta = self.optimal_combined_theta(
+                    C, theta_var, ei[minIdx], entmin[idx]
+                )
+                ui[:, 0:nupts, 0] = umodes[:, 0] + theta[i, np.newaxis] * (
+                    ui[:, 0:nupts, 0] - umodes[:, 0]
+                )
                 self.upoly.compute_coeff(umodes, ui[:, 0:nupts], invuvdm)
 
+            # Update solution
             u[:, :, idx : idx + 1] = ui[:, 0:nupts, :]
+
+            # update modes
             self.ua[:, :, idx : idx + 1] = umodes
 
-        _, _, emin, _ = self.get_minima(u, self.ua, entmin)
+        # update all min interface entropy
+        _, _, emin, _ = self._get_minima(u, self.ua, entmin)
         self.entmin_int[:] = emin
 
     def _u_to_f_closed(self, ubank):

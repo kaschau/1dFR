@@ -18,7 +18,6 @@ import sys
 import numpy as np
 from oneDFR.elements import system
 import matplotlib.pyplot as plt
-from pathlib import Path
 
 np.seterr(invalid="raise")
 
@@ -62,45 +61,17 @@ if __name__ == "__main__":
 
     config = {
         "intg": "rk4",
-        "intflux": "hllc",
+        "intflux": "rusanov",
         "gamma": 1.4,
         "bc": "periodic",
-        "efniter": 20,
     }
 
-    try:
-        neles = sys.argv[1]
-    except IndexError:
-        neles = 100
-    config["mesh"] = f"mesh-{neles}.npy"
-
-    try:
-        config["effunc"] = sys.argv[2]
-    except IndexError:
-        config["effunc"] = "dim"
-
-    try:
-        if sys.argv[3] == "gll":
-            config["quad"] = "gauss-legendre-lobatto"
-        elif sys.argv[3] == "gl":
-            config["quad"] = "gauss-legendre"
-    except IndexError:
-        config["quad"] = "gauss-legendre"
-
-    try:
-        config["efilt"] = sys.argv[4]
-    except IndexError:
-        config["efilt"] = "linear"
-
-    try:
-        config["p"] = int(sys.argv[5])
-    except IndexError:
-        config["p"] = 1
-
-    try:
-        config["e_tol"] = float(sys.argv[6])
-    except IndexError:
-        config["e_tol"] = 1e-6
+    config["mesh"] = "mesh-50.npy"
+    config["effunc"] = "nondim"
+    config["quad"] = "gauss-legendre"
+    config["efilt"] = "linearise"
+    config["p"] = 3
+    config["e_tol"] = 0
 
     plot = True
     savefig = False
@@ -143,7 +114,8 @@ if __name__ == "__main__":
     if config["efilt"] == "bisect":
         fname += f"_efniter-{a.config["efniter"]}"
     else:
-        fname += "_linearise"
+        fname += "_" + str(config["efilt"])
 
     if plot:
         plotres(frres, fname if savefig else None)
+# type: ignore
